@@ -1,0 +1,9 @@
+CXX := ppc-amigaos-g++
+CXXFLAGS := -mcrt=clib2 -DUSE_THREADS -DNO_UNIX_SIGNAL_HANDLING
+AMIGA := 1
+
+include Makefile
+
+.PHONY: strip
+strip:
+	ppc-amigaos-strip cppcheck

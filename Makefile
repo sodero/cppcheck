@@ -44,6 +44,7 @@ ifdef FILESDIR
 endif
 
 RDYNAMIC?=-rdynamic
+
 # Set the CPPCHK_GLIBCXX_DEBUG flag. This flag is not used in release Makefiles.
 # The _GLIBCXX_DEBUG define doesn't work in Cygwin or other Win32 systems.
 ifndef COMSPEC
@@ -111,7 +112,11 @@ else # !WINNT
         endif # !CPPCHK_GLIBCXX_DEBUG
     endif # GNU/kFreeBSD
 
-    LDFLAGS+=-pthread
+    ifeq ($(AMIGA),1)
+        LDFLAGS+=-athread=native
+    else
+        LDFLAGS+=-pthread
+    endif
 
 endif # WINNT
 
