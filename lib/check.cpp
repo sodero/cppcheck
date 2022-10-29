@@ -77,8 +77,8 @@ bool Check::wrongData(const Token *tok, const char *str)
 
 std::list<Check *> &Check::instances()
 {
-#ifdef __SVR4
-    // Under Solaris, destructors are called in wrong order which causes a segmentation fault.
+#if defined(__SVR4) || defined(__AMIGA__)
+    // Under Solaris and AmigaOS, destructors are called in wrong order which causes a segmentation fault.
     // This fix ensures pointer remains valid and reachable until program terminates.
     static std::list<Check *> *_instances= new std::list<Check *>;
     return *_instances;

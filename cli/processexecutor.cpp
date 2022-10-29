@@ -18,7 +18,7 @@
 
 #include "processexecutor.h"
 
-#if !defined(WIN32) && !defined(__MINGW32__)
+#if !defined(WIN32) && !defined(__MINGW32__) && !defined(__AMIGA__)
 
 #include "color.h"
 #include "config.h"
@@ -381,4 +381,4 @@ void ProcessExecutor::reportInternalChildErr(const std::string &childname, const
         mErrorLogger.reportErr(errmsg);
 }
 
-#endif // !WIN32
+#endif // !WIN32 && !__MINGW32__ && !__AMIGA__

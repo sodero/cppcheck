@@ -174,6 +174,21 @@ bool FileLister::fileExists(const std::string &path)
 #endif
 #endif
 
+#if defined(__AMIGA__)
+static int readdir_r(DIR *dir, struct dirent *buf, struct dirent **result)
+{
+    struct dirent *entry = readdir(dir);
+
+    if(!entry)
+    {
+        *result = NULL;
+        return errno;
+    }
+
+    *result = (struct dirent *) memcpy(buf, entry, sizeof(dirent));
+    return 0;
+}
+#endif
 
 static std::string addFiles2(std::map<std::string, std::size_t> &files,
                              const std::string &path,

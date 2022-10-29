@@ -44,7 +44,7 @@
 #   include <ucontext.h>
 
 #   undef _XOPEN_SOURCE
-#elif !defined(__OpenBSD__) && !defined(__HAIKU__)
+#elif !defined(__OpenBSD__) && !defined(__HAIKU__) && !defined(__AMIGA__)
 #   include <ucontext.h>
 #endif
 
