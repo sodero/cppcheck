@@ -43,8 +43,12 @@ ifdef FILESDIR
     override CPPFLAGS+=-DFILESDIR=\"$(FILESDIR)\"
 endif
 
-ifneq ($(AMIGA),1)
-RDYNAMIC=-rdynamic
+ifndef RDYNAMIC
+    RDYNAMIC=-rdynamic
+endif
+
+ifndef LTHREADS
+    LTHREADS=-pthread
 endif
 
 # Set the CPPCHK_GLIBCXX_DEBUG flag. This flag is not used in release Makefiles.
@@ -114,11 +118,7 @@ else # !WINNT
         endif # !CPPCHK_GLIBCXX_DEBUG
     endif # GNU/kFreeBSD
 
-    ifeq ($(AMIGA),1)
-        LDFLAGS+=-athread=native
-    else
-        LDFLAGS+=-pthread
-    endif
+    LDFLAGS+=$(LTHREADS)
 
 endif # WINNT
 
