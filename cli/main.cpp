@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 /**
  *
  * @mainpage Cppcheck
- * @version 2.10.99
+ * @version 2.18.99
  *
  * @section overview_sec Overview
  * Cppcheck is a simple tool for static analysis of C/C++ code.
@@ -65,19 +65,6 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
-#include <string>
-#endif
-
-#ifdef _WIN32
-#include <windows.h>
-
-static char exename[1024] = {0};
-#endif
-
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-
-static char exename[1024] = {0};
 #endif
 
 /**
@@ -95,15 +82,7 @@ int main(int argc, char* argv[])
 #endif
 
     CppCheckExecutor exec;
-#ifdef _WIN32
-    GetModuleFileNameA(nullptr, exename, sizeof(exename)/sizeof(exename[0])-1);
-    argv[0] = exename;
-#endif
-#if defined(__APPLE__)
-    uint32_t size = sizeof(exename);
-    _NSGetExecutablePath(exename, &size);
-    argv[0] = exename;
-#endif
+
 // *INDENT-OFF*
 #ifdef NDEBUG
     try {

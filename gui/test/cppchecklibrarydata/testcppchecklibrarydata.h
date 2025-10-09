@@ -1,4 +1,4 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
  * Copyright (C) 2007-2021 Cppcheck team.
  *
@@ -19,6 +19,7 @@
 #include "cppchecklibrarydata.h"
 
 #include <QObject>
+#include <QString>
 
 class TestCppcheckLibraryData : public QObject {
     Q_OBJECT
@@ -40,6 +41,8 @@ private slots:
     void reflectionValid();
     void markupValid();
     void containerValid();
+
+    void validateAllCfg();
 
 private:
     static void loadCfgFile(const QString &filename, CppcheckLibraryData &data, QString &res, bool removeFile = false);

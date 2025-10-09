@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2024 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,15 +19,22 @@
 #ifndef CODEEDITOR_H
 #define CODEEDITOR_H
 
+#include <cstdint>
+
+#include <QList>
+#include <QObject>
 #include <QPlainTextEdit>
 #include <QRegularExpression>
+#include <QSize>
+#include <QString>
+#include <QStringList>
 #include <QSyntaxHighlighter>
+#include <QTextCharFormat>
+#include <QWidget>
 
 class CodeEditorStyle;
-class QObject;
 class QPaintEvent;
 class QRect;
-class QResizeEvent;
 class QTextDocument;
 
 class Highlighter : public QSyntaxHighlighter {
@@ -45,7 +52,7 @@ protected:
     void highlightBlock(const QString &text) override;
 
 private:
-    enum RuleRole {
+    enum RuleRole : std::uint8_t {
         Keyword = 1,
         Class   = 2,
         Comment = 3,
@@ -60,8 +67,8 @@ private:
 
     void applyFormat(HighlightingRule &rule);
 
-    QVector<HighlightingRule> mHighlightingRules;
-    QVector<HighlightingRule> mHighlightingRulesWithSymbols;
+    QList<HighlightingRule> mHighlightingRules;
+    QList<HighlightingRule> mHighlightingRulesWithSymbols;
 
     QRegularExpression mCommentStartExpression;
     QRegularExpression mCommentEndExpression;
@@ -85,7 +92,7 @@ public:
     CodeEditor &operator=(const CodeEditor &) = delete;
     ~CodeEditor() override;
 
-    void lineNumberAreaPaintEvent(QPaintEvent *event);
+    void lineNumberAreaPaintEvent(const QPaintEvent *event);
     int lineNumberAreaWidth();
     void setStyle(const CodeEditorStyle& newStyle);
 
@@ -108,7 +115,7 @@ public:
         mFileName = fileName;
     }
 
-    QString getFileName() const {
+    const QString& getFileName() const {
         return mFileName;
     }
 

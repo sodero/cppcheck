@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,10 +20,16 @@
 #ifndef RESULTSTREE_H
 #define RESULTSTREE_H
 
-#include "errortypes.h"
 #include "showtypes.h"
+#include "checkers.h"
 
-#include <QStandardItemModel>
+#include <cstdint>
+#include <map>
+#include <string>
+
+#include <QObject>
+#include <QString>
+#include <QStringList>
 #include <QTreeView>
 
 class ApplicationList;
@@ -34,14 +40,13 @@ class QModelIndex;
 class QWidget;
 class QItemSelectionModel;
 class ThreadHandler;
-class QContextMenuEvent;
-class QKeyEvent;
-class QObject;
 class QSettings;
+class QStandardItem;
+class QStandardItemModel;
+enum class Severity : std::uint8_t;
 
 /// @addtogroup GUI
 /// @{
-
 
 /**
  * @brief Cppcheck's results are shown in this tree
@@ -51,7 +56,7 @@ class ResultsTree : public QTreeView {
     Q_OBJECT
 public:
     explicit ResultsTree(QWidget * parent = nullptr);
-    ~ResultsTree() override;
+
     void initialize(QSettings *settings, ApplicationList *list, ThreadHandler *checkThreadHandler);
 
     /**
@@ -132,7 +137,25 @@ public:
      * @return Directory containing source files
      */
 
-    QString getCheckDirectory();
+    const QString& getCheckDirectory() const;
+
+    /**
+     * @brief Results source for analysis results in the results tree.
+     */
+    enum class ResultsSource : std::uint8_t {
+        /** Results from a project, files, or directory check */
+        Analysis,
+        /** Saved results from a log file */
+        Log,
+    };
+
+    /**
+     * @brief Set the source type of the current results. This
+     * affects the actions that are allowed on them.
+     *
+     * @param source The results source type.
+     */
+    void setResultsSource(ResultsSource source);
 
     /**
      * @brief Check if there are any visible results in view.
@@ -181,6 +204,8 @@ public:
     ShowTypes mShowSeverities;
 
     void keyPressEvent(QKeyEvent *event) override;
+
+    void setReportType(ReportType reportType);
 
 signals:
     /**
@@ -333,7 +358,7 @@ protected:
      *
      * @param severity Severity
      */
-    static QString severityToIcon(Severity::SeverityType severity);
+    static QString severityToIcon(Severity severity);
 
     /**
      * @brief Helper function to open an error within target with application*
@@ -342,15 +367,7 @@ protected:
      * @param application Index of the application to open with. Giving -1
      *  (default value) will open the default application.
      */
-    void startApplication(QStandardItem *target, int application = -1);
-
-    /**
-     * @brief Helper function to copy filename/full path to the clipboard
-     *
-     * @param target Error tree item to open
-     * @param fullPath Are we copying full path or only filename?
-     */
-    void copyPathToClipboard(QStandardItem *target, bool fullPath);
+    void startApplication(const QStandardItem *target, int application = -1);
 
     /**
      * @brief Helper function returning the filename/full path of the error tree item \a target.
@@ -358,7 +375,7 @@ protected:
      * @param target The error tree item containing the filename/full path
      * @param fullPath Whether or not to retrieve the full path or only the filename.
      */
-    static QString getFilePath(QStandardItem *target, bool fullPath);
+    static QString getFilePath(const QStandardItem *target, bool fullPath);
 
     /**
      * @brief Context menu event (user right clicked on the tree)
@@ -379,7 +396,7 @@ protected:
      */
     QStandardItem *addBacktraceFiles(QStandardItem *parent,
                                      const ErrorLine &item,
-                                     const bool hide,
+                                     bool hide,
                                      const QString &icon,
                                      bool childOfMessage);
 
@@ -388,7 +405,7 @@ protected:
      * @param severity Severity to convert
      * @return Severity as translated string
      */
-    static QString severityToTranslatedString(Severity::SeverityType severity);
+    static QString severityToTranslatedString(Severity severity);
 
     /**
      * @brief Load all settings
@@ -453,13 +470,13 @@ protected:
      * @brief Item model for tree
      *
      */
-    QStandardItemModel mModel;
+    QStandardItemModel* mModel;
 
     /**
      * @brief Program settings
      *
      */
-    QSettings *mSettings;
+    QSettings* mSettings{};
 
     /**
      * @brief A string used to filter the results for display.
@@ -471,37 +488,37 @@ protected:
      * @brief List of applications to open errors with
      *
      */
-    ApplicationList *mApplications;
+    ApplicationList* mApplications{};
 
     /**
      * @brief Right clicked item (used by context menu slots)
      *
      */
-    QStandardItem *mContextItem;
+    QStandardItem* mContextItem{};
 
     /**
      * @brief Should full path of files be shown (true) or relative (false)
      *
      */
-    bool mShowFullPath;
+    bool mShowFullPath{};
 
     /**
      * @brief Should full path of files be saved
      *
      */
-    bool mSaveFullPath;
+    bool mSaveFullPath{};
 
     /**
      * @brief Save all errors (true) or only visible (false)
      *
      */
-    bool mSaveAllErrors;
+    bool mSaveAllErrors = true;
 
     /**
      * @brief true if optional column "Id" is shown
      *
      */
-    bool mShowErrorId;
+    bool mShowErrorId{};
 
     /**
      * @brief Path we are currently checking
@@ -510,10 +527,16 @@ protected:
     QString mCheckPath;
 
     /**
+     * @brief The type of source of the current results
+     *
+     */
+    ResultsSource mResultsSource{ResultsSource::Analysis};
+
+    /**
      * @brief Are there any visible errors
      *
      */
-    bool mVisibleErrors;
+    bool mVisibleErrors{};
 
 private:
     /** tag selected items */
@@ -522,13 +545,21 @@ private:
     /** @brief Convert GUI error item into data error item */
     void readErrorItem(const QStandardItem *error, ErrorItem *item) const;
 
+    bool isCertReport() const;
+
+    bool isAutosarMisraReport() const;
+
     QStringList mHiddenMessageId;
 
-    QItemSelectionModel *mSelectionModel;
-    ThreadHandler *mThread;
+    QItemSelectionModel* mSelectionModel{};
+    ThreadHandler *mThread{};
 
-    bool mShowCppcheck;
-    bool mShowClang;
+    bool mShowCppcheck = true;
+    bool mShowClang = true;
+
+    ReportType mReportType = ReportType::normal;
+
+    std::map<std::string, std::string> mGuideline;
 };
 /// @}
 #endif // RESULTSTREE_H

@@ -1,4 +1,4 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
  * Copyright (C) 2007-2021 Cppcheck team.
  *
@@ -26,4 +26,13 @@ private slots:
     void loadSimple() const;
     void loadSimpleWithIgnore() const;
     void loadSimpleNoroot() const;
+
+    void getAddonFilePath() const;
+
+    void getInlineSuppressionDefaultValue() const;
+    void getInlineSuppression() const;
+
+    void getCheckingSuppressionsRelative() const;
+    void getCheckingSuppressionsAbsolute() const;
+    void getCheckingSuppressionsStar() const;
 };

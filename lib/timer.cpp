@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,49 +18,67 @@
 
 #include "timer.h"
 
+#include "utils.h"
+
 #include <algorithm>
 #include <iostream>
 #include <utility>
 #include <vector>
-/*
-    TODO:
-    - rename "file" to "single"
-    - synchronise map access in multithreaded mode or disable timing
-    - add unit tests
-        - for --showtime (needs input file)
-        - for Timer* classes
- */
 
 namespace {
-    using dataElementType = std::pair<std::string, struct TimerResultsData>;
+    using dataElementType = std::pair<std::string, TimerResultsData>;
     bool more_second_sec(const dataElementType& lhs, const dataElementType& rhs)
     {
         return lhs.second.seconds() > rhs.second.seconds();
     }
+
+    // TODO: remove and print through (synchronized) ErrorLogger instead
+    std::mutex stdCoutLock;
 }
 
+// TODO: this does not include any file context when SHOWTIME_FILE thus rendering it useless - should we include the logging with the progress logging?
+// that could also get rid of the broader locking
 void TimerResults::showResults(SHOWTIME_MODES mode) const
 {
-    if (mode == SHOWTIME_MODES::SHOWTIME_NONE)
+    if (mode == SHOWTIME_MODES::SHOWTIME_NONE || mode == SHOWTIME_MODES::SHOWTIME_FILE_TOTAL)
         return;
 
-    std::cout << std::endl;
     TimerResultsData overallData;
-
     std::vector<dataElementType> data;
-    data.reserve(mResults.size());
+
     {
         std::lock_guard<std::mutex> l(mResultsSync);
-        data.insert(data.begin(), mResults.begin(), mResults.end());
+
+        data.reserve(mResults.size());
+        data.insert(data.begin(), mResults.cbegin(), mResults.cend());
     }
     std::sort(data.begin(), data.end(), more_second_sec);
 
+    // lock the whole logging operation to avoid multiple threads printing their results at the same time
+    std::lock_guard<std::mutex> l(stdCoutLock);
+
+    std::cout << std::endl;
+
     size_t ordinal = 1; // maybe it would be nice to have an ordinal in output later!
-    for (std::vector<dataElementType>::const_iterator iter=data.begin(); iter!=data.end(); ++iter) {
+    for (auto iter=data.cbegin(); iter!=data.cend(); ++iter) {
         const double sec = iter->second.seconds();
-        const double secAverage = sec / (double)(iter->second.mNumberOfResults);
-        overallData.mClocks += iter->second.mClocks;
-        if ((mode != SHOWTIME_MODES::SHOWTIME_TOP5) || (ordinal<=5)) {
+        const double secAverage = sec / static_cast<double>(iter->second.mNumberOfResults);
+        bool hasParent = false;
+        {
+            // Do not use valueFlow.. in "Overall time" because those are included in Tokenizer already
+            if (startsWith(iter->first,"valueFlow"))
+                hasParent = true;
+
+            // Do not use inner timers in "Overall time"
+            const std::string::size_type pos = iter->first.rfind("::");
+            if (pos != std::string::npos)
+                hasParent = std::any_of(data.cbegin(), data.cend(), [iter,pos](const dataElementType& d) {
+                    return d.first.size() == pos && iter->first.compare(0, d.first.size(), d.first) == 0;
+                });
+        }
+        if (!hasParent)
+            overallData.mClocks += iter->second.mClocks;
+        if ((mode != SHOWTIME_MODES::SHOWTIME_TOP5_FILE && mode != SHOWTIME_MODES::SHOWTIME_TOP5_SUMMARY) || (ordinal<=5)) {
             std::cout << iter->first << ": " << sec << "s (avg. " << secAverage << "s - " << iter->second.mNumberOfResults  << " result(s))" << std::endl;
         }
         ++ordinal;
@@ -78,16 +96,24 @@ void TimerResults::addResults(const std::string& str, std::clock_t clocks)
     mResults[str].mNumberOfResults++;
 }
 
+void TimerResults::reset()
+{
+    std::lock_guard<std::mutex> l(mResultsSync);
+    mResults.clear();
+}
+
 Timer::Timer(std::string str, SHOWTIME_MODES showtimeMode, TimerResultsIntf* timerResults)
     : mStr(std::move(str))
     , mTimerResults(timerResults)
-    , mStart(0)
+    , mStart(std::clock())
     , mShowTimeMode(showtimeMode)
-    , mStopped(false)
-{
-    if (showtimeMode != SHOWTIME_MODES::SHOWTIME_NONE)
-        mStart = std::clock();
-}
+    , mStopped(showtimeMode == SHOWTIME_MODES::SHOWTIME_NONE || showtimeMode == SHOWTIME_MODES::SHOWTIME_FILE_TOTAL)
+{}
+
+Timer::Timer(bool fileTotal, std::string filename)
+    : mStr(std::move(filename))
+    , mStopped(!fileTotal)
+{}
 
 Timer::~Timer()
 {
@@ -101,8 +127,13 @@ void Timer::stop()
         const std::clock_t diff = end - mStart;
 
         if (mShowTimeMode == SHOWTIME_MODES::SHOWTIME_FILE) {
-            const double sec = (double)diff / CLOCKS_PER_SEC;
+            const double sec = static_cast<double>(diff) / CLOCKS_PER_SEC;
+            std::lock_guard<std::mutex> l(stdCoutLock);
             std::cout << mStr << ": " << sec << "s" << std::endl;
+        } else if (mShowTimeMode == SHOWTIME_MODES::SHOWTIME_FILE_TOTAL) {
+            const double sec = static_cast<double>(diff) / CLOCKS_PER_SEC;
+            std::lock_guard<std::mutex> l(stdCoutLock);
+            std::cout << "Check time: " << mStr << ": " << sec << "s" << std::endl;
         } else {
             if (mTimerResults)
                 mTimerResults->addResults(mStr, diff);

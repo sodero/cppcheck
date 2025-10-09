@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2024 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -38,9 +38,20 @@ struct TaggedAllocator : std::allocator<T>
     template<class ... Ts>
     // cppcheck-suppress noExplicitConstructor
     // NOLINTNEXTLINE(google-explicit-constructor)
-    TaggedAllocator(Ts&&... ts)
+    TaggedAllocator(Ts && ... ts)
         : std::allocator<T>(std::forward<Ts>(ts)...)
     {}
+
+    template<class U>
+    // cppcheck-suppress noExplicitConstructor
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    TaggedAllocator(const TaggedAllocator<U, N> /*unused*/) {}
+
+    template<class U>
+    struct rebind
+    {
+        using other = TaggedAllocator<U, N>;
+    };
 };
 
 template<typename T, std::size_t N = DefaultSmallVectorSize>

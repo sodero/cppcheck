@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,21 +21,26 @@
 #define RESULTSVIEW_H
 
 #include "report.h"
+#include "resultstree.h"
 #include "showtypes.h"
 
-#include <QSet>
+#include <cstdint>
+
+#include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 class ErrorItem;
+class Settings;
 class ApplicationList;
 class ThreadHandler;
 class QModelIndex;
 class QPrinter;
 class QSettings;
 class CheckStatistics;
-class QObject;
 class QPoint;
+enum class ReportType : std::uint8_t;
 namespace Ui {
     class ResultsView;
 }
@@ -85,8 +90,9 @@ public:
      *
      * @param filename Filename to save results to
      * @param type Type of the report.
+     * @param productName Custom product name
      */
-    void save(const QString &filename, Report::Type type) const;
+    void save(const QString &filename, Report::Type type, const QString& productName) const;
 
     /**
      * @brief Update results from old report (tag, sinceDate)
@@ -134,7 +140,12 @@ public:
      * @return Directory containing source files
      */
 
-    QString getCheckDirectory();
+    QString getCheckDirectory() const;
+
+    /**
+     * Set settings used in checking
+     */
+    void setCheckSettings(const Settings& settings);
 
     /**
      * @brief Inform the view that checking has started
@@ -176,7 +187,16 @@ public:
      */
     void translate();
 
-    void disableProgressbar();
+    /**
+     * @brief This function should be called when analysis is stopped
+     */
+    void stopAnalysis();
+
+    /**
+     * @brief Are there successful results?
+     * @return true if analysis finished without critical errors etc
+     */
+    bool isSuccess() const;
 
     /**
      * @brief Read errors from report XML file.
@@ -189,7 +209,7 @@ public:
      * @brief Return checking statistics.
      * @return Pointer to checking statistics.
      */
-    CheckStatistics *getStatistics() const {
+    const CheckStatistics *getStatistics() const {
         return mStatistics;
     }
 
@@ -197,7 +217,16 @@ public:
      * @brief Return Showtypes.
      * @return Pointer to Showtypes.
      */
-    ShowTypes * getShowTypes() const;
+    const ShowTypes & getShowTypes() const;
+
+    void setReportType(ReportType reportType);
+
+    /**
+     * @brief Set the results source type for the results tree.
+     *
+     * @param source The results source type.
+     */
+    void setResultsSource(ResultsTree::ResultsSource source);
 
 signals:
 
@@ -308,7 +337,7 @@ public slots:
      * @brief Slot printing the current report to the printer.
      * @param printer The printer used for printing the report.
      */
-    void print(QPrinter* printer);
+    void print(QPrinter* printer) const;
 
     /**
      * @brief Slot opening a print preview dialog
@@ -340,15 +369,32 @@ public slots:
      */
     void logCopyComplete();
 
-protected:
+private:
+
+    /**
+     * If provided ErrorItem is a critical error then display warning message
+     * in the resultsview
+     */
+    void handleCriticalError(const ErrorItem& item);
+
     /**
      * @brief Should we show a "No errors found dialog" every time no errors were found?
      */
-    bool mShowNoErrorsMessage;
+    bool mShowNoErrorsMessage = true;
 
     Ui::ResultsView *mUI;
 
     CheckStatistics *mStatistics;
+
+    Settings* mCheckSettings = nullptr;
+
+    /**
+     * Set to true when checking finish successfully. Set to false whenever analysis starts.
+     */
+    bool mSuccess = false;
+
+    /** Critical error ids */
+    QString mCriticalErrors;
 
 private slots:
     /**

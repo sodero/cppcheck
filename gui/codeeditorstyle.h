@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2024 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <QColor>
 #include <QFont>
 #include <QString>
+#include <Qt>
 
 const QString SETTINGS_STYLE_GROUP("EditorStyle");
 const QString SETTINGS_STYLE_TYPE("StyleType");
@@ -57,17 +58,17 @@ public:
         // cppcheck-suppress naming-varname - TODO: fix this
         QColor LnNumFGColor, QColor LnNumBGColor,
         // cppcheck-suppress naming-varname - TODO: fix this
-        QColor KeyWdFGColor, const QFont::Weight& KeyWdWeight,
+        QColor KeyWdFGColor, QFont::Weight KeyWdWeight,
         // cppcheck-suppress naming-varname - TODO: fix this
-        QColor ClsFGColor, const QFont::Weight& ClsWeight,
+        QColor ClsFGColor, QFont::Weight ClsWeight,
         // cppcheck-suppress naming-varname - TODO: fix this
-        QColor QteFGColor, const QFont::Weight& QteWeight,
+        QColor QteFGColor, QFont::Weight QteWeight,
         // cppcheck-suppress naming-varname - TODO: fix this
-        QColor CmtFGColor, const QFont::Weight& CmtWeight,
+        QColor CmtFGColor, QFont::Weight CmtWeight,
         // cppcheck-suppress naming-varname - TODO: fix this
         QColor SymbFGColor, QColor SymbBGColor,
-        const QFont::Weight& SymbWeight);
-    ~CodeEditorStyle() {}
+        // cppcheck-suppress naming-varname - TODO: fix this
+        QFont::Weight SymbWeight);
 
     bool operator==(const CodeEditorStyle& rhs) const;
     bool operator!=(const CodeEditorStyle& rhs) const;
@@ -81,7 +82,7 @@ public:
     static void saveSettings(QSettings *settings, const CodeEditorStyle& theStyle);
 
 public:
-    bool mSystemTheme;
+    bool mSystemTheme{};
     QColor widgetFGColor;
     QColor widgetBGColor;
     QColor highlightBGColor;

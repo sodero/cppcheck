@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,13 +24,13 @@
 
 #include "check.h"
 #include "config.h"
-#include "tokenize.h"
 
 #include <string>
 
 class ErrorLogger;
 class Settings;
 class Token;
+class Tokenizer;
 
 /// @addtogroup Checks
 /// @{
@@ -40,33 +40,26 @@ class Token;
  */
 
 class CPPCHECKLIB CheckPostfixOperator : public Check {
+    friend class TestPostfixOperator;
+
 public:
     /** This constructor is used when registering the CheckPostfixOperator */
     CheckPostfixOperator() : Check(myName()) {}
 
+private:
     /** This constructor is used when running checks. */
     CheckPostfixOperator(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
         : Check(myName(), tokenizer, settings, errorLogger) {}
 
-    void runChecks(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger) override {
-        if (tokenizer->isC())
-            return;
-
-        CheckPostfixOperator checkPostfixOperator(tokenizer, settings, errorLogger);
-        checkPostfixOperator.postfixOperator();
-    }
+    void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger) override;
 
     /** Check postfix operators */
     void postfixOperator();
 
-private:
     /** Report Error */
     void postfixOperatorError(const Token *tok);
 
-    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override {
-        CheckPostfixOperator c(nullptr, settings, errorLogger);
-        c.postfixOperatorError(nullptr);
-    }
+    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override;
 
     static std::string myName() {
         return "Using postfix operators";

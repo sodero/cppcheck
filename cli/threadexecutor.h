@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,16 +19,16 @@
 #ifndef THREADEXECUTOR_H
 #define THREADEXECUTOR_H
 
-#include "config.h"
-
+#include "cppcheck.h"
 #include "executor.h"
 
-#include <cstddef>
-#include <map>
-#include <string>
+#include <list>
 
 class Settings;
 class ErrorLogger;
+struct Suppressions;
+struct FileSettings;
+class FileWithDetails;
 
 /// @addtogroup CLI
 /// @{
@@ -38,17 +38,16 @@ class ErrorLogger;
  * all files using threads.
  */
 class ThreadExecutor : public Executor {
+    friend class SyncLogForwarder;
+
 public:
-    ThreadExecutor(const std::map<std::string, std::size_t> &files, Settings &settings, ErrorLogger &errorLogger);
+    ThreadExecutor(const std::list<FileWithDetails> &files, const std::list<FileSettings>& fileSettings, const Settings &settings, Suppressions &suppressions, ErrorLogger &errorLogger, CppCheck::ExecuteCmdFn executeCommand);
     ThreadExecutor(const ThreadExecutor &) = delete;
-    ~ThreadExecutor() override;
-    void operator=(const ThreadExecutor &) = delete;
+    ThreadExecutor& operator=(const ThreadExecutor &) = delete;
 
     unsigned int check() override;
 
-private:
-    class SyncLogForwarder;
-    static unsigned int STDCALL threadProc(SyncLogForwarder *logForwarder);
+    CppCheck::ExecuteCmdFn mExecuteCommand;
 };
 
 /// @}

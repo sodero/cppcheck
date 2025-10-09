@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,17 +23,19 @@
 
 #include "config.h"
 #include "errortypes.h"
-#include "suppressions.h"
-#include "color.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <list>
+#include <set>
 #include <string>
-#include <utility>
 #include <vector>
+#include <map>
 
 class Token;
 class TokenList;
+enum class ReportType : std::uint8_t;
+enum class Color : std::uint8_t;
 
 namespace tinyxml2 {
     class XMLElement;
@@ -52,17 +54,10 @@ public:
      * Internally paths are stored with / separator. When getting the filename
      * it is by default converted to native separators.
      */
-    class CPPCHECKLIB FileLocation {
+    class CPPCHECKLIB WARN_UNUSED FileLocation {
     public:
-        FileLocation()
-            : fileIndex(0), line(0), column(0) {}
-
-        explicit FileLocation(const std::string &file, int line = 0, unsigned int column = 0)
-            : fileIndex(0), line(line), column(column), mOrigFileName(file), mFileName(file) {}
-
-        FileLocation(const std::string &file, std::string info, int line, unsigned int column)
-            : fileIndex(0), line(line), column(column), mOrigFileName(file), mFileName(file), mInfo(std::move(info)) {}
-
+        FileLocation(const std::string &file, int line, unsigned int column);
+        FileLocation(const std::string &file, std::string info, int line, unsigned int column);
         FileLocation(const Token* tok, const TokenList* tokenList);
         FileLocation(const Token* tok, std::string info, const TokenList* tokenList);
 
@@ -84,22 +79,19 @@ public:
          * Set the filename.
          * @param file Filename to set.
          */
-        void setfile(const std::string &file);
+        void setfile(std::string file);
 
         /**
          * @return the location as a string. Format: [file:line]
          */
-        std::string stringify() const;
+        std::string stringify(bool addcolumn = false) const;
 
         unsigned int fileIndex;
         int line; // negative value means "no line"
         unsigned int column;
 
-        std::string getinfo() const {
+        const std::string& getinfo() const {
             return mInfo;
-        }
-        void setinfo(const std::string &i) {
-            mInfo = i;
         }
 
     private:
@@ -110,46 +102,46 @@ public:
 
     ErrorMessage(std::list<FileLocation> callStack,
                  std::string file1,
-                 Severity::SeverityType severity,
+                 Severity severity,
                  const std::string &msg,
-                 std::string id, Certainty::CertaintyLevel certainty);
+                 std::string id, Certainty certainty);
     ErrorMessage(std::list<FileLocation> callStack,
                  std::string file1,
-                 Severity::SeverityType severity,
+                 Severity severity,
                  const std::string &msg,
                  std::string id,
                  const CWE &cwe,
-                 Certainty::CertaintyLevel certainty);
+                 Certainty certainty);
     ErrorMessage(const std::list<const Token*>& callstack,
                  const TokenList* list,
-                 Severity::SeverityType severity,
+                 Severity severity,
                  std::string id,
                  const std::string& msg,
-                 Certainty::CertaintyLevel certainty);
+                 Certainty certainty);
     ErrorMessage(const std::list<const Token*>& callstack,
                  const TokenList* list,
-                 Severity::SeverityType severity,
+                 Severity severity,
                  std::string id,
                  const std::string& msg,
                  const CWE &cwe,
-                 Certainty::CertaintyLevel certainty);
-    ErrorMessage(const ErrorPath &errorPath,
+                 Certainty certainty);
+    ErrorMessage(ErrorPath errorPath,
                  const TokenList *tokenList,
-                 Severity::SeverityType severity,
+                 Severity severity,
                  const char id[],
                  const std::string &msg,
                  const CWE &cwe,
-                 Certainty::CertaintyLevel certainty);
+                 Certainty certainty);
     ErrorMessage();
-    explicit ErrorMessage(const tinyxml2::XMLElement * const errmsg);
+    explicit ErrorMessage(const tinyxml2::XMLElement * errmsg);
 
     /**
      * Format the error message in XML format
      */
     std::string toXML() const;
 
-    static std::string getXMLHeader(const std::string& productName);
-    static std::string getXMLFooter();
+    static std::string getXMLHeader(std::string productName, int xmlVersion = 2);
+    static std::string getXMLFooter(int xmlVersion);
 
     /**
      * Format the error message into a string.
@@ -161,11 +153,11 @@ public:
      * @return formatted string
      */
     std::string toString(bool verbose,
-                         const std::string &templateFormat = emptyString,
-                         const std::string &templateLocation = emptyString) const;
+                         const std::string &templateFormat,
+                         const std::string &templateLocation) const;
 
     std::string serialize() const;
-    bool deserialize(const std::string &data);
+    void deserialize(const std::string &data);
 
     std::list<FileLocation> callStack;
     std::string id;
@@ -173,9 +165,18 @@ public:
     /** For GUI rechecking; source file (not header) */
     std::string file0;
 
-    Severity::SeverityType severity;
+    Severity severity;
     CWE cwe;
-    Certainty::CertaintyLevel certainty;
+    Certainty certainty;
+
+    /** remark from REMARK comment */
+    std::string remark;
+
+    /** misra/autosar/certc classification/level */
+    std::string classification;
+
+    /** misra/autosar/certc guideline */
+    std::string guideline;
 
     /** Warning hash */
     std::size_t hash;
@@ -189,6 +190,7 @@ public:
     }
 
     /** Verbose message (may be the same as the short message) */
+    // cppcheck-suppress unusedFunction - used by GUI only
     const std::string &verboseMessage() const {
         return mVerboseMessage;
     }
@@ -198,7 +200,7 @@ public:
         return mSymbolNames;
     }
 
-    Suppressions::ErrorMessage toSuppressionsErrorMessage() const;
+    static ErrorMessage fromInternalError(const InternalError &internalError, const TokenList *tokenList, const std::string &filename, const std::string& msg = "");
 
 private:
     static std::string fixInvalidChars(const std::string& raw);
@@ -219,8 +221,8 @@ private:
  */
 class CPPCHECKLIB ErrorLogger {
 public:
-    ErrorLogger() {}
-    virtual ~ErrorLogger() {}
+    ErrorLogger() = default;
+    virtual ~ErrorLogger() = default;
 
     /**
      * Information about progress is directed here.
@@ -228,7 +230,7 @@ public:
      *
      * @param outmsg Message to show e.g. "Checking main.cpp..."
      */
-    virtual void reportOut(const std::string &outmsg, Color c = Color::Reset) = 0;
+    virtual void reportOut(const std::string &outmsg, Color c) = 0;
 
     /**
      * Information about found errors and warnings is directed
@@ -237,6 +239,13 @@ public:
      * @param msg Location and other information about the found error.
      */
     virtual void reportErr(const ErrorMessage &msg) = 0;
+
+    /**
+     * Information about file metrics reported by addons.
+     *
+     * @param metric The file metric to report, as an XML object.
+     */
+    virtual void reportMetric(const std::string &metric) = 0;
 
     /**
      * Report progress to client
@@ -250,22 +259,7 @@ public:
         (void)value;
     }
 
-    /**
-     * Output information messages.
-     * @param msg Location and other information about the found error.
-     */
-    virtual void reportInfo(const ErrorMessage &msg) {
-        reportErr(msg);
-    }
-
-    /**
-     * Report unmatched suppressions
-     * @param unmatched list of unmatched suppressions (from Settings::Suppressions::getUnmatched(Local|Global)Suppressions)
-     * @return true is returned if errors are reported
-     */
-    bool reportUnmatchedSuppressions(const std::list<Suppressions::Suppression> &unmatched);
-
-    static std::string callStackToString(const std::list<ErrorMessage::FileLocation> &callStack);
+    static std::string callStackToString(const std::list<ErrorMessage::FileLocation> &callStack, bool addcolumn = false);
 
     /**
      * Convert XML-sensitive characters into XML entities
@@ -281,10 +275,34 @@ public:
                "</dict>\r\n"
                "</plist>";
     }
+
+    static bool isCriticalErrorId(const std::string& id) {
+        return mCriticalErrorIds.count(id) != 0;
+    }
+
+private:
+    static const std::set<std::string> mCriticalErrorIds;
 };
 
 /** Replace substring. Example replaceStr("1,NR,3", "NR", "2") => "1,2,3" */
 std::string replaceStr(std::string s, const std::string &from, const std::string &to);
+
+/** replaces the static parts of the location template **/
+CPPCHECKLIB void substituteTemplateFormatStatic(std::string& templateFormat, bool eraseColors = false);
+
+/** replaces the static parts of the location template **/
+CPPCHECKLIB void substituteTemplateLocationStatic(std::string& templateLocation, bool eraseColors = false);
+
+/** Get a classification string from the given guideline and reporttype */
+CPPCHECKLIB std::string getClassification(const std::string &guideline, ReportType reportType);
+
+/** Get a guidline string froM the given error id, reporttype, mapping and severity */
+CPPCHECKLIB std::string getGuideline(const std::string &errId, ReportType reportType,
+                                     const std::map<std::string, std::string> &guidelineMapping,
+                                     Severity severity);
+
+/** Get a map from cppcheck error ids to guidlines matching the given report type */
+CPPCHECKLIB std::map<std::string, std::string> createGuidelineMapping(ReportType reportType);
 
 /// @}
 //---------------------------------------------------------------------------

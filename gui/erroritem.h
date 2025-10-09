@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2024 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,12 +37,12 @@
  */
 class GuiSeverity {
 public:
-    static QString toString(Severity::SeverityType severity) {
-        return QString::fromStdString(Severity::toString(severity));
+    static QString toString(Severity severity) {
+        return QString::fromStdString(severityToString(severity));
     }
 
-    static Severity::SeverityType fromString(const QString &severity) {
-        return Severity::fromString(severity.toStdString());
+    static Severity fromString(const QString &severity) {
+        return severityFromString(severity.toStdString());
     }
 };
 
@@ -83,7 +83,7 @@ public:
 
     QString file0;
     QString errorId;
-    Severity::SeverityType severity;
+    Severity severity;
     bool inconclusive;
     QString summary;
     QString message;
@@ -91,6 +91,9 @@ public:
     unsigned long long hash;
     QList<QErrorPathItem> errorPath;
     QString symbolNames;
+    QString remark;
+    QString classification; // misra/cert/etc: classification/level
+    QString guideline; // misra/cert/etc: guideline/rule
 
     // Special GUI properties
     QString sinceDate;
@@ -117,11 +120,12 @@ public:
     int cwe;
     unsigned long long hash;
     bool inconclusive;
-    Severity::SeverityType severity;
+    Severity severity;
     QString summary;
     QString message;
     QString sinceDate;
     QString tags;
+    QString remark;
 };
 
 /// @}

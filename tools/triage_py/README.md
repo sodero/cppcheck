@@ -5,9 +5,10 @@ A script to run a code sample against a given set of Cppcheck versions.
 ## Usage
 
 ```
-usage: triage_version.py [-h] [--compare] [--verbose] [--debug] [--debug-warnings] [--check-library] [--timeout TIMEOUT]
-                 [--compact]
-                 dir infile [repo]
+usage: triage_version.py [-h] [--compare] [--verbose] [--debug] [--debug-warnings] [--check-library]
+                         [--timeout TIMEOUT] [--compact] [--no-quiet] [--perf] [--start START]
+                         [--no-stderr | --no-stdout]
+                         dir infile [repo]
 
 positional arguments:
   dir                directory with versioned folders
@@ -23,11 +24,16 @@ options:
   --check-library    passed through to binary if supported
   --timeout TIMEOUT  the amount of seconds to wait for the analysis to finish
   --compact          only print versions with changes with --compare
+  --no-quiet         do not specify -q
+  --perf             output duration of execution in seconds (CSV format)
+  --start START      specify the start version/commit
+  --no-stderr        do not display stdout
+  --no-stdout        do not display stderr
 ```
 
 ### Structure of `dir`
 
-It expects the given `dir` to contain folders which are named after the containg version or commit hash. These folder must contain a `cppcheck` and the associated files for that version.
+It expects the given `dir` to contain folders which are either named after version numbers or commit hashes. These folders must each contain a `cppcheck` and the associated files for that version.
 
 If the first folder is not a valid version the names are interpreted as commit hashes. These are internally sorted but that requires the `repo` parameter to be set.
 

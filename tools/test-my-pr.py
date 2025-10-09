@@ -7,6 +7,7 @@
 
 import donate_cpu_lib as lib
 import argparse
+import glob
 import os
 import sys
 import random
@@ -25,12 +26,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Run this script from your branch with proposed Cppcheck patch to verify your patch against current main. It will compare output of testing bunch of opensource packages')
     parser.add_argument('-j', default=1, type=int, help='Concurency execution threads')
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('-p', default=256, type=int, help='Count of packages to check')
-    group.add_argument('--packages', nargs='+', help='Check specific packages and then stop.')
+    package_group = parser.add_mutually_exclusive_group()
+    package_group.add_argument('-p', default=256, type=int, help='Count of packages to check')
+    package_group.add_argument('--packages', nargs='+', help='Check specific packages and then stop.')
+    package_group.add_argument('--packages-path', default=None, type=str, help='Check packages in path.')
     parser.add_argument('-o', default='my_check_diff.log', help='Filename of result inside a working path dir')
-    parser.add_argument('--c-only', dest='c_only', help='Only process c packages', action='store_true')
-    parser.add_argument('--cpp-only', dest='cpp_only', help='Only process c++ packages', action='store_true')
+
+    language_group = parser.add_mutually_exclusive_group()
+    language_group.add_argument('--c-only', dest='c_only', help='Only process c packages', action='store_true')
+    language_group.add_argument('--cpp-only', dest='cpp_only', help='Only process c++ packages', action='store_true')
     parser.add_argument('--work-path', '--work-path=', default=__work_path, type=str, help='Working directory for reference repo')
     args = parser.parse_args()
 
@@ -48,7 +52,7 @@ if __name__ == "__main__":
     main_dir = os.path.join(work_path, 'tree-main')
 
     lib.set_jobs('-j' + str(args.j))
-    result_file = os.path.join(work_path, args.o)
+    result_file = os.path.abspath(os.path.join(work_path, args.o))
     (f, ext) = os.path.splitext(result_file)
     timing_file = f + '_timing' + ext
     your_repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
@@ -60,21 +64,18 @@ if __name__ == "__main__":
 
     try:
         lib.clone_cppcheck(repo_dir, old_repo_dir)
-        pass
     except Exception as e:
         print('Failed to clone Cppcheck repository ({}), retry later'.format(e))
         sys.exit(1)
 
     try:
         lib.checkout_cppcheck_version(repo_dir, 'main', main_dir)
-        pass
     except Exception as e:
         print('Failed to checkout main ({}), retry later'.format(e))
         sys.exit(1)
 
     try:
-        os.chdir(your_repo_dir)
-        commit_id = (subprocess.check_output(['git', 'merge-base', 'origin/main', 'HEAD'])).strip().decode('ascii')
+        commit_id = (subprocess.check_output(['git', 'merge-base', 'origin/main', 'HEAD'], cwd=your_repo_dir)).strip().decode('ascii')
         with open(result_file, 'a') as myfile:
             myfile.write('Common ancestor: ' + commit_id + '\n\n')
         package_width = '140'
@@ -83,7 +84,6 @@ if __name__ == "__main__":
             myfile.write('{:{package_width}} {:{timing_width}} {:{timing_width}} {:{timing_width}}\n'.format(
                 'Package', 'main', 'your', 'Factor', package_width=package_width, timing_width=timing_width))
 
-        os.chdir(main_dir)
         subprocess.check_call(['git', 'fetch', '--depth=1', 'origin', commit_id])
         subprocess.check_call(['git', 'checkout', '-f', commit_id])
     except BaseException as e:
@@ -100,7 +100,13 @@ if __name__ == "__main__":
         print('Failed to compile your version of Cppcheck')
         sys.exit(1)
 
-    if args.packages:
+    if args.packages_path:
+        # You can download packages using daca2-download.py
+        args.packages = glob.glob(os.path.join(args.packages_path, '*.tar.xz'))
+        args.p = len(args.packages)
+        packages_idxs = list(range(args.p))
+        random.shuffle(packages_idxs)
+    elif args.packages:
         args.p = len(args.packages)
         packages_idxs = []
     else:
@@ -122,17 +128,21 @@ if __name__ == "__main__":
         else:
             package = lib.get_package(packages_idxs.pop())
 
-        tgz = lib.download_package(work_path, package, None)
-        if tgz is None:
-            print("No package downloaded")
-            continue
+        if package.startswith('ftp://') or package.startswith('http://'):
+            tgz = lib.download_package(work_path, package, None)
+            if tgz is None:
+                print("No package downloaded")
+                continue
+        else:
+            print('Package: ' + package)
+            tgz = package
 
         source_path, source_found = lib.unpack_package(work_path, tgz, c_only=args.c_only, cpp_only=args.cpp_only)
         if not source_found:
             print("No files to process")
             continue
 
-        results_to_diff = list()
+        results_to_diff = []
 
         main_crashed = False
         your_crashed = False

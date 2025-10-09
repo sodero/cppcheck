@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,9 +31,9 @@
 
 class Settings;
 class Token;
-class Tokenizer;
 class ErrorLogger;
 class Variable;
+class Tokenizer;
 
 namespace ValueFlow {
     class Value;
@@ -49,17 +49,13 @@ public:
     /** This constructor is used when registering the CheckClass */
     CheckAutoVariables() : Check(myName()) {}
 
+private:
     /** This constructor is used when running checks. */
     CheckAutoVariables(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
         : Check(myName(), tokenizer, settings, errorLogger) {}
 
     /** @brief Run checks against the normal token list */
-    void runChecks(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger) override {
-        CheckAutoVariables checkAutoVariables(tokenizer, settings, errorLogger);
-        checkAutoVariables.assignFunctionArg();
-        checkAutoVariables.checkVarLifetime();
-        checkAutoVariables.autoVariables();
-    }
+    void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger) override;
 
     /** assign function argument */
     void assignFunctionArg();
@@ -76,43 +72,20 @@ public:
 
     void checkVarLifetimeScope(const Token * start, const Token * end);
 
-private:
-    void errorReturnAddressToAutoVariable(const Token *tok);
-    void errorReturnAddressToAutoVariable(const Token *tok, const ValueFlow::Value *value);
-    void errorReturnPointerToLocalArray(const Token *tok);
     void errorAutoVariableAssignment(const Token *tok, bool inconclusive);
     void errorReturnDanglingLifetime(const Token *tok, const ValueFlow::Value* val);
     void errorInvalidLifetime(const Token *tok, const ValueFlow::Value* val);
-    void errorDanglngLifetime(const Token *tok, const ValueFlow::Value *val);
+    void errorDanglngLifetime(const Token *tok, const ValueFlow::Value *val, bool isStatic = false);
     void errorDanglingTemporaryLifetime(const Token* tok, const ValueFlow::Value* val, const Token* tempTok);
     void errorReturnReference(const Token* tok, ErrorPath errorPath, bool inconclusive);
     void errorDanglingReference(const Token *tok, const Variable *var, ErrorPath errorPath);
     void errorDanglingTempReference(const Token* tok, ErrorPath errorPath, bool inconclusive);
     void errorReturnTempReference(const Token* tok, ErrorPath errorPath, bool inconclusive);
     void errorInvalidDeallocation(const Token *tok, const ValueFlow::Value *val);
-    void errorReturnAddressOfFunctionParameter(const Token *tok, const std::string &varname);
     void errorUselessAssignmentArg(const Token *tok);
     void errorUselessAssignmentPtrArg(const Token *tok);
 
-    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override {
-        ErrorPath errorPath;
-        CheckAutoVariables c(nullptr,settings,errorLogger);
-        c.errorAutoVariableAssignment(nullptr, false);
-        c.errorReturnAddressToAutoVariable(nullptr);
-        c.errorReturnPointerToLocalArray(nullptr);
-        c.errorReturnReference(nullptr, errorPath, false);
-        c.errorDanglingReference(nullptr, nullptr, errorPath);
-        c.errorReturnTempReference(nullptr, errorPath, false);
-        c.errorDanglingTempReference(nullptr, errorPath, false);
-        c.errorInvalidDeallocation(nullptr, nullptr);
-        c.errorReturnAddressOfFunctionParameter(nullptr, "parameter");
-        c.errorUselessAssignmentArg(nullptr);
-        c.errorUselessAssignmentPtrArg(nullptr);
-        c.errorReturnDanglingLifetime(nullptr, nullptr);
-        c.errorInvalidLifetime(nullptr, nullptr);
-        c.errorDanglngLifetime(nullptr, nullptr);
-        c.errorDanglingTemporaryLifetime(nullptr, nullptr, nullptr);
-    }
+    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override;
 
     static std::string myName() {
         return "Auto Variables";

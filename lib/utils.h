@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,12 +26,19 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <initializer_list>
+#include <limits>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 struct SelectMapKeys {
     template<class Pair>
+    // NOLINTNEXTLINE(readability-const-return-type) - false positive
     typename Pair::first_type operator()(const Pair& p) const {
         return p.first;
     }
@@ -44,10 +51,18 @@ struct SelectMapValues {
     }
 };
 
+struct OnExit {
+    std::function<void()> f;
+
+    ~OnExit() {
+        f();
+    }
+};
+
 template<class Range, class T>
 bool contains(const Range& r, const T& x)
 {
-    return std::find(r.begin(), r.end(), x) != r.end();
+    return std::find(r.cbegin(), r.cend(), x) != r.cend();
 }
 
 template<class T>
@@ -62,6 +77,12 @@ bool contains(const std::initializer_list<T>& r, const U& x)
     return std::find(r.begin(), r.end(), x) != r.end();
 }
 
+template<class T, class ... Ts>
+inline std::array<T, sizeof...(Ts) + 1> makeArray(T x, Ts... xs)
+{
+    return {std::move(x), std::move(xs)...};
+}
+
 // Enum hash for C++11. This is not needed in C++14
 struct EnumClassHash {
     template<typename T>
@@ -70,6 +91,22 @@ struct EnumClassHash {
         return static_cast<std::size_t>(t);
     }
 };
+
+inline bool startsWith(const std::string& str, const char start[], std::size_t startlen)
+{
+    return str.compare(0, startlen, start) == 0;
+}
+
+template<std::size_t N>
+bool startsWith(const std::string& str, const char (&start)[N])
+{
+    return startsWith(str, start, N - 1);
+}
+
+inline bool startsWith(const std::string& str, const std::string& start)
+{
+    return startsWith(str, start.c_str(), start.length());
+}
 
 inline bool endsWith(const std::string &str, char c)
 {
@@ -115,7 +152,7 @@ inline static bool isStringCharLiteral(const std::string &str, char q)
         return false;
 
     static const std::array<std::string, 5> suffixes{"", "u8", "u", "U", "L"};
-    return std::any_of(suffixes.begin(), suffixes.end(), [&](const std::string& p) {
+    return std::any_of(suffixes.cbegin(), suffixes.cend(), [&](const std::string& p) {
         return isPrefixStringCharLiteral(str, q, p);
     });
 }
@@ -165,20 +202,229 @@ CPPCHECKLIB int caseInsensitiveStringCompare(const std::string& lhs, const std::
 
 CPPCHECKLIB bool isValidGlobPattern(const std::string& pattern);
 
-CPPCHECKLIB bool matchglob(const std::string& pattern, const std::string& name);
-
-CPPCHECKLIB bool matchglobs(const std::vector<std::string> &patterns, const std::string &name);
+CPPCHECKLIB bool matchglob(const std::string& pattern, const std::string& name, bool caseInsensitive = false);
 
 CPPCHECKLIB void strTolower(std::string& str);
+
+template<typename T, typename std::enable_if<std::is_signed<T>::value, bool>::type=true>
+bool strToInt(const std::string& str, T &num, std::string* err = nullptr)
+{
+    long long tmp;
+    try {
+        std::size_t idx = 0;
+        tmp = std::stoll(str, &idx);
+        if (idx != str.size()) {
+            if (err)
+                *err = "not an integer";
+            return false;
+        }
+    } catch (const std::out_of_range&) {
+        if (err)
+            *err = "out of range (stoll)";
+        return false;
+    } catch (const std::invalid_argument &) {
+        if (err)
+            *err = "not an integer";
+        return false;
+    }
+    if (str.front() == '-' && std::numeric_limits<T>::min() == 0) {
+        if (err)
+            *err = "needs to be positive";
+        return false;
+    }
+    if (tmp < std::numeric_limits<T>::min() || tmp > std::numeric_limits<T>::max()) {
+        if (err)
+            *err = "out of range (limits)";
+        return false;
+    }
+    num = static_cast<T>(tmp);
+    return true;
+}
+
+template<typename T, typename std::enable_if<std::is_unsigned<T>::value, bool>::type=true>
+bool strToInt(const std::string& str, T &num, std::string* err = nullptr)
+{
+    unsigned long long tmp;
+    try {
+        std::size_t idx = 0;
+        tmp = std::stoull(str, &idx);
+        if (idx != str.size()) {
+            if (err)
+                *err = "not an integer";
+            return false;
+        }
+    } catch (const std::out_of_range&) {
+        if (err)
+            *err = "out of range (stoull)";
+        return false;
+    } catch (const std::invalid_argument &) {
+        if (err)
+            *err = "not an integer";
+        return false;
+    }
+    if (str.front() == '-') {
+        if (err)
+            *err = "needs to be positive";
+        return false;
+    }
+    if (tmp > std::numeric_limits<T>::max()) {
+        if (err)
+            *err = "out of range (limits)";
+        return false;
+    }
+    num = tmp;
+    return true;
+}
+
+template<typename T>
+T strToInt(const std::string& str)
+{
+    T tmp = 0;
+    std::string err;
+    if (!strToInt(str, tmp, &err))
+        throw std::runtime_error("converting '" + str + "' to integer failed - " + err);
+    return tmp;
+}
 
 /**
  *  Simple helper function:
  * \return size of array
  * */
 template<typename T, int size>
+// cppcheck-suppress unusedFunction - only used in conditional code
 std::size_t getArrayLength(const T (& /*unused*/)[size])
 {
     return size;
+}
+
+/**
+ * @brief get id string. i.e. for dump files
+ * it will be a hexadecimal output.
+ */
+static inline std::string id_string_i(std::uintptr_t l)
+{
+    if (!l)
+        return "0";
+
+    static constexpr int ptr_size = sizeof(void*);
+
+    // two characters of each byte / contains terminating \0
+    static constexpr int buf_size = (ptr_size * 2) + 1;
+
+    char buf[buf_size];
+
+    // needs to be signed so we don't underflow in padding loop
+    int idx = buf_size - 1;
+    buf[idx] = '\0';
+
+    while (l != 0)
+    {
+        char c;
+        const std::uintptr_t temp = l % 16; // get the remainder
+        if (temp < 10) {
+            // 0-9
+            c = '0' + temp;
+        }
+        else {
+            // a-f
+            c = 'a' + (temp - 10);
+        }
+        buf[--idx] = c; // store in reverse order
+        l = l / 16;
+    }
+
+    return &buf[idx];
+}
+
+static inline std::string id_string(const void* p)
+{
+    return id_string_i(reinterpret_cast<std::uintptr_t>(p));
+}
+
+static inline const char* bool_to_string(bool b)
+{
+    return b ? "true" : "false";
+}
+
+/**
+ * Remove heading and trailing whitespaces from the input parameter.
+ * If string is all spaces/tabs, return empty string.
+ * @param s The string to trim.
+ * @param t The characters to trim.
+ */
+CPPCHECKLIB std::string trim(const std::string& s, const std::string& t = " \t");
+
+/**
+ * Replace all occurrences of searchFor with replaceWith in the
+ * given source.
+ * @param source The string to modify
+ * @param searchFor What should be searched for
+ * @param replaceWith What will replace the found item
+ */
+CPPCHECKLIB void findAndReplace(std::string &source, const std::string &searchFor, const std::string &replaceWith);
+
+/**
+ * Replace all escape sequences in the given string.
+ * @param source The string that contains escape sequences
+ */
+CPPCHECKLIB std::string replaceEscapeSequences(const std::string &source);
+
+namespace cppcheck
+{
+    NORETURN inline void unreachable()
+    {
+#if defined(__GNUC__)
+        __builtin_unreachable();
+#elif defined(_MSC_VER)
+        __assume(false);
+#else
+#error "no unreachable implementation"
+#endif
+    }
+}
+
+template<typename T>
+static inline T* default_if_null(T* p, T* def)
+{
+    return p ? p : def;
+}
+
+template<typename T>
+static inline T* empty_if_null(T* p)
+{
+    return default_if_null(p, "");
+}
+
+/**
+ * Split string by given sperator.
+ * @param str The string to split
+ * @param sep The seperator
+ * @return The list of seperate strings (including empty ones). The whole input string if no seperator found.
+ */
+CPPCHECKLIB std::vector<std::string> splitString(const std::string& str, char sep);
+
+namespace utils {
+    template<class T>
+    constexpr typename std::add_const<T>::type & as_const(T& t) noexcept
+    {
+        // NOLINTNEXTLINE(bugprone-return-const-ref-from-parameter) - potential false positive
+        return t;
+    }
+
+    // Thread-unsafe memoization
+    template<class F, class R=decltype(std::declval<F>()())>
+    static inline std::function<R()> memoize(F f)
+    {
+        bool init = false;
+        R result{};
+        return [=]() mutable -> R {
+            if (init)
+                return result;
+            result = f();
+            init = true;
+            return result;
+        };
+    }
 }
 
 #endif

@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,30 +44,22 @@ class CPPCHECKLIB CheckAssert : public Check {
 public:
     CheckAssert() : Check(myName()) {}
 
+private:
     CheckAssert(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
         : Check(myName(), tokenizer, settings, errorLogger) {}
 
     /** run checks, the token list is not simplified */
-    void runChecks(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger) override {
-        CheckAssert checkAssert(tokenizer, settings, errorLogger);
-        checkAssert.assertWithSideEffects();
-    }
+    void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger) override;
 
     void assertWithSideEffects();
 
-protected:
     void checkVariableAssignment(const Token* assignTok, const Scope *assertionScope);
     static bool inSameScope(const Token* returnTok, const Token* assignTok);
 
-private:
     void sideEffectInAssertError(const Token *tok, const std::string& functionName);
     void assignmentInAssertError(const Token *tok, const std::string &varname);
 
-    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override {
-        CheckAssert c(nullptr, settings, errorLogger);
-        c.sideEffectInAssertError(nullptr, "function");
-        c.assignmentInAssertError(nullptr, "var");
-    }
+    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override;
 
     static std::string myName() {
         return "Assert";

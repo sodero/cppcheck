@@ -1,4 +1,4 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
  * Copyright (C) 2007-2021 Cppcheck team.
  *
@@ -32,4 +32,5 @@ private slots:
     void filterFiles2() const;
     void filterFiles3() const;
     void filterFiles4() const;
+    void filterFiles5() const;
 };

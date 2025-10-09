@@ -1,3 +1,24 @@
-release notes for cppcheck-2.10
+Release Notes for Cppcheck 2.19
 
-- the deprecated Makefile option SRCDIR is no longer accepted
+New checks:
+-
+
+Improved checking:
+-
+
+GUI:
+-
+
+Changed interface:
+-
+
+Deprecations:
+-
+
+Other:
+- Removed deprecated support for builds with Qt5.
+- Added make variables `CXXOPTS` and `LDOPTS` to extend existing `CXXFLAGS` and `LDFLAGS`.
+- Added make variables `CPPOPTS` to extend existing `CPPFLAGS`.
+- `CPPFLAGS` are not longer being passed to the linker command for `cppcheck` and `testrunner`.
+- Removed deprecated platforms `unix32-unsigned` and `unix64-unsigned`.
+-

@@ -1,19 +1,28 @@
 if (BUILD_TESTS)
+    add_subdirectory(signal)
+    add_subdirectory(seh)
+
     file(GLOB hdrs "*.h")
     file(GLOB srcs "*.cpp")
-    list(APPEND testrunner_SOURCES ${hdrs} ${srcs} $<TARGET_OBJECTS:lib_objs> $<TARGET_OBJECTS:cli_objs> $<TARGET_OBJECTS:simplecpp_objs>)
-    if(USE_BUNDLED_TINYXML2)
-        list(APPEND testrunner_SOURCES $<TARGET_OBJECTS:tinyxml2_objs>)
+    list(APPEND testrunner_SOURCES ${hdrs} ${srcs} $<TARGET_OBJECTS:cli_objs> $<TARGET_OBJECTS:frontend_objs>)
+    if (NOT BUILD_CORE_DLL)
+        list(APPEND testrunner_SOURCES $<TARGET_OBJECTS:cppcheck-core> $<TARGET_OBJECTS:simplecpp_objs>)
+        if(USE_BUNDLED_TINYXML2)
+            list(APPEND testrunner_SOURCES $<TARGET_OBJECTS:tinyxml2_objs>)
+        endif()
     endif()
 
     add_executable(testrunner ${testrunner_SOURCES})
-    target_include_directories(testrunner PRIVATE ${PROJECT_SOURCE_DIR}/lib/ ${PROJECT_SOURCE_DIR}/cli/)
+    target_include_directories(testrunner PRIVATE ${PROJECT_SOURCE_DIR}/lib/ ${PROJECT_SOURCE_DIR}/cli/ ${PROJECT_SOURCE_DIR}/frontend/)
     if(USE_BUNDLED_TINYXML2)
-        target_include_directories(testrunner PRIVATE ${PROJECT_SOURCE_DIR}/externals/tinyxml2)
+        target_externals_include_directories(testrunner PRIVATE ${PROJECT_SOURCE_DIR}/externals/tinyxml2)
     else()
         target_include_directories(testrunner SYSTEM PRIVATE ${tinyxml2_INCLUDE_DIRS})
     endif()
-    target_include_directories(testrunner PRIVATE ${PROJECT_SOURCE_DIR}/externals/simplecpp/)
+    target_externals_include_directories(testrunner PRIVATE ${PROJECT_SOURCE_DIR}/externals/simplecpp/)
+    if (Boost_FOUND)
+        target_include_directories(testrunner SYSTEM PRIVATE ${Boost_INCLUDE_DIRS})
+    endif()
     if (HAVE_RULES)
         target_link_libraries(testrunner ${PCRE_LIBRARY})
     endif()
@@ -28,6 +37,18 @@ if (BUILD_TESTS)
         target_link_libraries(testrunner ${tinyxml2_LIBRARIES})
     endif()
     target_link_libraries(testrunner ${CMAKE_THREAD_LIBS_INIT})
+    if (BUILD_CORE_DLL)
+        target_compile_definitions(testrunner PRIVATE CPPCHECKLIB_IMPORT SIMPLECPP_IMPORT)
+        target_link_libraries(testrunner cppcheck-core)
+    endif()
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        # (void) in ASSERT_THROW* macros might trigger this
+        target_compile_options_safe(testrunner -Wno-useless-cast)
+    endif()
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # $ is used in dinit() designated initialization helper
+        target_compile_options_safe(testrunner -Wno-dollar-in-identifier-extension)
+    endif()
 
     if (NOT CMAKE_DISABLE_PRECOMPILE_HEADERS)
         target_precompile_headers(testrunner PRIVATE precompiled.h)
@@ -35,7 +56,10 @@ if (BUILD_TESTS)
 
     add_dependencies(testrunner copy_cfg)
     add_dependencies(testrunner copy_addons)
-    add_dependencies(testrunner run-dmake)
+    add_dependencies(testrunner copy_platforms)
+    if (NOT DISABLE_DMAKE)
+        add_dependencies(testrunner run-dmake)
+    endif()
 
     if (LIBXML2_XMLLINT_EXECUTABLE)
         # TODO: run the CMake implementation of the tests
@@ -46,17 +70,14 @@ if (BUILD_TESTS)
     endif()
 
     if (REGISTER_TESTS)
-        # CMP0064 requires 3.4
-        # CMAKE_MATCH_<n> usage for if (MATCHES) requires 3.9
-        cmake_minimum_required(VERSION 3.9)
-        cmake_policy(SET CMP0064 NEW)
-        cmake_policy(SET CMP0057 NEW)
+        # CMAKE_MATCH_<n> usage for if (MATCHES) requires CMake 3.9
 
         find_package(Threads REQUIRED)
         include(ProcessorCount)
         ProcessorCount(N)
         set(CTEST_PARALLEL_LEVEL ${N} CACHE STRING "CTest parallel level")
-        set(CTEST_TIMEOUT 90 CACHE STRING "CTest timeout")
+        # the macos-* runners are sporadically much slower than other runners so chose a high timeout
+        set(CTEST_TIMEOUT 130 CACHE STRING "CTest timeout")
         add_custom_target(check ${CMAKE_CTEST_COMMAND} --output-on-failure -j ${CTEST_PARALLEL_LEVEL} -C ${CMAKE_CFG_INTDIR} --timeout ${CTEST_TIMEOUT}
                 DEPENDS testrunner cppcheck)
 
@@ -66,7 +87,7 @@ if (BUILD_TESTS)
             if (${NAME} IN_LIST SKIP_TESTS)
             elseif(TEST ${NAME})
             else()
-                add_test(NAME ${NAME} COMMAND testrunner ${NAME} WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+                add_test(NAME ${NAME} COMMAND $<TARGET_FILE:testrunner> ${NAME} WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
             endif()
         endfunction()
 
@@ -80,15 +101,15 @@ if (BUILD_TESTS)
         endforeach()
 
         function(add_cfg CFG_TEST)
-            set(options INCONCLUSIVE)
             set(oneValueArgs PLATFORM NAME)
-            set(multiValueArgs LIBRARY)
+            set(multiValueArgs ADD_LIBRARY)
 
             cmake_parse_arguments(PARSE "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
-            if(PARSE_LIBRARY)
-                string(REPLACE ";" "," LIBRARY "${PARSE_LIBRARY}")
-            else()
-                get_filename_component(LIBRARY ${CFG_TEST} NAME_WE)
+            get_filename_component(LIBRARY ${CFG_TEST} NAME_WE)
+            # TODO: get rid of this
+            if(PARSE_ADD_LIBRARY)
+                string(REPLACE ";" "," ADD_LIBRARY "${PARSE_ADD_LIBRARY}")
+                set(LIBRARY "${ADD_LIBRARY},${LIBRARY}")
             endif()
             set(PLATFORM unix64)
             if(PARSE_PLATFORM)
@@ -99,52 +120,56 @@ if (BUILD_TESTS)
             else()
                 string(MAKE_C_IDENTIFIER ${CFG_TEST} TEST_NAME)
             endif()
-            set(INCONCLUSIVE)
-            if(PARSE_INCONCLUSIVE)
-                set(INCONCLUSIVE "--inconclusive")
-            endif()
             if ("cfg-${TEST_NAME}" IN_LIST SKIP_TESTS)
             else()
                 # TODO: add syntax check
                 add_test(NAME cfg-${TEST_NAME}
                         COMMAND $<TARGET_FILE:cppcheck>
-                        --check-library
-                        --platform=${PLATFORM}
                         --library=${LIBRARY}
-                        --enable=information
-                        --enable=style
+                        --check-library
+                        --check-level=exhaustive
+                        --platform=${PLATFORM}
+                        --enable=style,information
+                        --inconclusive
+                        --force
                         --error-exitcode=1
-                        --suppress=missingIncludeSystem
                         --inline-suppr
-                        ${INCONCLUSIVE}
+                        --debug-warnings
+                        --suppress=checkersReport
                         ${CMAKE_CURRENT_SOURCE_DIR}/cfg/${CFG_TEST}
                 )
             endif()
         endfunction()
-        add_cfg(boost.cpp INCONCLUSIVE)
+        # TODO: glob this
+        add_cfg(boost.cpp)
         add_cfg(bsd.c)
         add_cfg(cairo.c)
-        add_cfg(cppunit.cpp INCONCLUSIVE)
-        add_cfg(gnu.c LIBRARY posix;gnu)
-        add_cfg(googletest.cpp INCONCLUSIVE)
-        add_cfg(gtk.c INCONCLUSIVE)
-        add_cfg(kde.cpp INCONCLUSIVE)
+        add_cfg(cppunit.cpp)
+        add_cfg(emscripten.cpp)
+        # TODO: posix needs to specified first or it has a different mmap() config
+        # TODO: get rid of posix dependency
+        add_cfg(gnu.c ADD_LIBRARY posix)
+        add_cfg(googletest.cpp)
+        add_cfg(gtk.c)
+        add_cfg(kde.cpp ADD_LIBRARY qt)
         add_cfg(libcurl.c)
         add_cfg(libsigc++.cpp)
         add_cfg(lua.c)
+        add_cfg(mfc.cpp)
         add_cfg(opencv2.cpp)
         add_cfg(openmp.c)
         add_cfg(openssl.c)
         add_cfg(posix.c)
         add_cfg(python.c)
-        add_cfg(qt.cpp INCONCLUSIVE)
-        add_cfg(sqlite3.c INCONCLUSIVE)
-        add_cfg(std.c INCONCLUSIVE)
-        add_cfg(std.cpp INCONCLUSIVE)
-        add_cfg(windows.cpp INCONCLUSIVE NAME windows32A PLATFORM win32A)
-        add_cfg(windows.cpp INCONCLUSIVE NAME windows32W PLATFORM win32W)
-        add_cfg(windows.cpp INCONCLUSIVE NAME windows64 PLATFORM win64)
-        add_cfg(wxwidgets.cpp INCONCLUSIVE)
+        add_cfg(qt.cpp)
+        add_cfg(selinux.c)
+        add_cfg(sqlite3.c)
+        add_cfg(std.c)
+        add_cfg(std.cpp)
+        add_cfg(windows.cpp NAME windows32A PLATFORM win32A)
+        add_cfg(windows.cpp NAME windows32W PLATFORM win32W)
+        add_cfg(windows.cpp NAME windows64 PLATFORM win64)
+        add_cfg(wxwidgets.cpp)
 
         function(fixture_cost NAME COST)
             if(TEST ${NAME})
@@ -154,10 +179,45 @@ if (BUILD_TESTS)
 
         # Set cost of the more expensive tests to help improve parallel scheduling
         # of tests
-        fixture_cost(TestIO 20)
-        fixture_cost(cfg-std_c 8)
-        fixture_cost(TestThreadExecutor 5)
-        fixture_cost(TestLeakAutoVarRecursiveCountLimit 4)
-        fixture_cost(TestTokenizer 4)
+        #
+        # To collect data to update this list remove "<cmake-build-folder>/Testing/Temporary/CTestCostData.txt",
+        # disable the fixture_cost() statements below and run a Debug build with "ctest -j1" several times.
+        # Afterwards run it with "ctest -j11" and immediately cancel the run and update the list accordingly to the
+        # first eleven tests chosen.
+        #
+        # NOTE: The TestProcessExecutor* tests are not the slowest but they invoke processes which max out the system
+        # and negatively impact the run-time of the other tests
+        if (TRUE)
+            fixture_cost(TestProcessExecutorFiles 2.00)
+            fixture_cost(TestProcessExecutorFS 2.00)
+            fixture_cost(TestCondition 1.30)
+            fixture_cost(TestStl 1.30)
+            fixture_cost(TestTokenizer 1.30)
+            fixture_cost(cfg-std_c 1.20)
+            fixture_cost(cfg-std_cpp 1.20)
+            fixture_cost(TestAutoVariables 1.20)
+            fixture_cost(TestUninitVar 1.20)
+            fixture_cost(TestSimplifyTemplate 1.15)
+            fixture_cost(TestIO 1.15)
+            fixture_cost(TestBufferOverrun 1.15)
+            fixture_cost(TestClass 1.15)
+            fixture_cost(TestNullPointer 1.15)
+            fixture_cost(TestSuppressions 1.15)
+            fixture_cost(TestLeakAutoVar 1.10)
+            fixture_cost(TestSingleExecutorFS 1.10)
+            fixture_cost(TestLeakAutoVarRecursiveCountLimit 1.05)
+            fixture_cost(TestThreadExecutorFS 1.05)
+            fixture_cost(TestThreadExecutorFiles 1.05)
+            fixture_cost(TestSymbolDatabase 1.05)
+            fixture_cost(TestSingleExecutorFiles 1.05)
+            fixture_cost(TestOther 1.05)
+            fixture_cost(TestValueFlow 1.05)
+            fixture_cost(cfg-wxwidgets_cpp 1.05)
+            fixture_cost(cfg-posix_c 1.05)
+            fixture_cost(cfg-windows32A 1.03)
+            fixture_cost(cfg-windows32W 1.03)
+            fixture_cost(cfg-windows64 1.03)
+            fixture_cost(TestUnusedVar 1.03)
+        endif()
     endif()
 endif()

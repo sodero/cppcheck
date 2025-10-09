@@ -10,12 +10,13 @@ import re
 import signal
 import tarfile
 import shlex
+import copy
 
 
 # Version scheme (MAJOR.MINOR.PATCH) should orientate on "Semantic Versioning" https://semver.org/
 # Every change in this script should result in increasing the version number accordingly (exceptions may be cosmetic
 # changes)
-CLIENT_VERSION = "1.3.37"
+CLIENT_VERSION = "1.3.69"
 
 # Timeout for analysis with Cppcheck in seconds
 CPPCHECK_TIMEOUT = 30 * 60
@@ -36,10 +37,8 @@ def detect_make():
 
     for m in make_cmds:
         try:
-            #print('{} --version'.format(m))
-            subprocess.call([m, '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError as e:
-            #print("'{}' not found ({})".format(m, e))
+            subprocess.check_call([m, '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
             continue
 
         print("using '{}'".format(m))
@@ -65,12 +64,13 @@ def check_requirements():
     for app in apps:
         try:
             #print('{} --version'.format(app))
-            subprocess.call([app, '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.check_call([app, '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
             print("Error: '{}' is required".format(app))
             result = False
 
     try:
+        # pylint: disable-next=unused-import - intentional
         import psutil
     except ImportError as e:
         print("Error: {}. Module is required.".format(e))
@@ -80,8 +80,8 @@ def check_requirements():
 
 
 # Try and retry with exponential backoff if an exception is raised
-def try_retry(fun, fargs=(), max_tries=5):
-    sleep_duration = 5.0
+# pylint: disable-next=inconsistent-return-statements
+def try_retry(fun, fargs=(), max_tries=5, sleep_duration=5.0, sleep_factor=2.0):
     for i in range(max_tries):
         try:
             return fun(*fargs)
@@ -93,7 +93,8 @@ def try_retry(fun, fargs=(), max_tries=5):
                 print("{} in {}: {}".format(type(e).__name__, fun.__name__, str(e)))
                 print("Trying {} again in {} seconds".format(fun.__name__, sleep_duration))
                 time.sleep(sleep_duration)
-                sleep_duration *= 2.0
+                sleep_duration *= sleep_factor
+                # do not return - re-try
             else:
                 print("Maximum number of tries reached for {}".format(fun.__name__))
                 raise e
@@ -127,18 +128,31 @@ def checkout_cppcheck_version(repo_path, version, cppcheck_path):
 
         # It is possible to pull branches, not tags
         if version != 'main':
-            return
+            return False
+
+        hash_old = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=cppcheck_path).strip()
 
         print('Pulling {}'.format(version))
-        subprocess.check_call(['git', 'pull'], cwd=cppcheck_path)
-    else:
-        if version != 'main':
-            print('Fetching {}'.format(version))
-            # Since this is a shallow clone, explicitly fetch the remote version tag
-            refspec = 'refs/tags/' + version + ':ref/tags/' + version
-            subprocess.check_call(['git', 'fetch', '--depth=1', 'origin', refspec], cwd=repo_path)
-        print('Adding worktree \'{}\' for {}'.format(cppcheck_path, version))
-        subprocess.check_call(['git', 'worktree', 'add', cppcheck_path,  version], cwd=repo_path)
+        # --rebase is a workaround for a dropped commit - see https://github.com/danmar/cppcheck/pull/6904
+        # TODO: drop the commit in question
+        # TOD: remove --rebase
+        subprocess.check_call(['git', 'pull', '--rebase'], cwd=cppcheck_path)
+
+        hash_new = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=cppcheck_path).strip()
+
+        has_changes = hash_old != hash_new
+        if not has_changes:
+            print('No changes detected')
+        return has_changes
+
+    if version != 'main':
+        print('Fetching {}'.format(version))
+        # Since this is a shallow clone, explicitly fetch the remote version tag
+        refspec = 'refs/tags/' + version + ':ref/tags/' + version
+        subprocess.check_call(['git', 'fetch', '--depth=1', 'origin', refspec], cwd=repo_path)
+    print('Adding worktree \'{}\' for {}'.format(cppcheck_path, version))
+    subprocess.check_call(['git', 'worktree', 'add', cppcheck_path,  version], cwd=repo_path)
+    return True
 
 
 def get_cppcheck_info(cppcheck_path):
@@ -148,14 +162,29 @@ def get_cppcheck_info(cppcheck_path):
         return ''
 
 
-def compile_version(cppcheck_path):
+def __get_cppcheck_binary(cppcheck_path):
     if __make_cmd == "msbuild.exe":
-        if os.path.isfile(os.path.join(cppcheck_path, 'bin', 'cppcheck.exe')):
+        return os.path.join(cppcheck_path, 'bin', 'cppcheck.exe')
+    if __make_cmd == 'mingw32-make':
+        return os.path.join(cppcheck_path, 'cppcheck.exe')
+    return os.path.join(cppcheck_path, 'cppcheck')
+
+
+def has_binary(cppcheck_path):
+    cppcheck_bin = __get_cppcheck_binary(cppcheck_path)
+    if __make_cmd == "msbuild.exe":
+        if os.path.isfile(cppcheck_bin):
             return True
     elif __make_cmd == 'mingw32-make':
-        if os.path.isfile(os.path.join(cppcheck_path, 'cppcheck.exe')):
+        if os.path.isfile(cppcheck_bin):
             return True
-    elif os.path.isfile(os.path.join(cppcheck_path, 'cppcheck')):
+    elif os.path.isfile(cppcheck_bin):
+        return True
+    return False
+
+
+def compile_version(cppcheck_path):
+    if has_binary(cppcheck_path):
         return True
     # Build
     ret = compile_cppcheck(cppcheck_path)
@@ -166,13 +195,19 @@ def compile_version(cppcheck_path):
         exclude_bin = 'cppcheck.exe'
     else:
         exclude_bin = 'cppcheck'
-    # TODO: how to support multiple compiler on the same machine? this will clean msbuild.exe files in a mingw32-make build and vice versa
-    subprocess.call(['git', 'clean', '-f', '-d', '-x', '--exclude', exclude_bin], cwd=cppcheck_path)
+    # TODO: how to support multiple compilers on the same machine? this will clean msbuild.exe files in a mingw32-make build and vice versa
+    subprocess.check_call(['git', 'clean', '-f', '-d', '-x', '--exclude', exclude_bin], cwd=cppcheck_path)
     return ret
 
 
 def compile_cppcheck(cppcheck_path):
     print('Compiling {}'.format(os.path.basename(cppcheck_path)))
+
+    cppcheck_bin = __get_cppcheck_binary(cppcheck_path)
+    # remove file so interrupted "main" branch compilation is being resumed
+    if os.path.isfile(cppcheck_bin):
+        os.remove(cppcheck_bin)
+
     try:
         if __make_cmd == 'msbuild.exe':
             subprocess.check_call(['python3', os.path.join('tools', 'matchcompiler.py'), '--write-dir', 'lib'], cwd=cppcheck_path)
@@ -182,6 +217,7 @@ def compile_cppcheck(cppcheck_path):
             # TODO: processes still exhaust all threads of the system
             subprocess.check_call([__make_cmd, '-t:cli', os.path.join(cppcheck_path, 'cppcheck.sln'), '/property:Configuration=Release;Platform=x64'], cwd=cppcheck_path, env=build_env)
         else:
+            # TODO: use CXXOPTS instead
             build_cmd = [__make_cmd, __jobs, 'MATCHCOMPILER=yes', 'CXXFLAGS=-O2 -g -w']
             build_env = os.environ
             if __make_cmd == 'mingw32-make':
@@ -202,7 +238,9 @@ def compile_cppcheck(cppcheck_path):
             subprocess.check_call([os.path.join(cppcheck_path, 'cppcheck'), '--version'], cwd=cppcheck_path)
     except Exception as e:
         print('Running Cppcheck failed: {}'.format(e))
-        # TODO: remove binary
+        # remove faulty binary
+        if os.path.isfile(cppcheck_bin):
+            os.remove(cppcheck_bin)
         return False
 
     return True
@@ -210,47 +248,48 @@ def compile_cppcheck(cppcheck_path):
 
 def get_cppcheck_versions():
     print('Connecting to server to get Cppcheck versions..')
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.connect(__server_address)
-            sock.send(b'GetCppcheckVersions\n')
-            versions = sock.recv(256)
-    except socket.error as err:
-        print('Failed to get cppcheck versions: ' + str(err))
-        return None
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect(__server_address)
+        sock.send(b'GetCppcheckVersions\n')
+        versions = sock.recv(256)
+    # TODO: sock.recv() sometimes hangs and returns b'' afterwards
+    if not versions:
+        raise Exception('received empty response')
     return versions.decode('utf-8').split()
 
 
 def get_packages_count():
-    print('Connecting to server to get count of packages..')
-    try:
+    def __get_packages_count():
+        print('Connecting to server to get count of packages..')
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.connect(__server_address)
             sock.send(b'getPackagesCount\n')
-            packages = int(sock.recv(64))
-    except socket.error as err:
-        print('Failed to get count of packages: ' + str(err))
-        return None
-    return packages
+            packages = sock.recv(64)
+        # TODO: sock.recv() sometimes hangs and returns b'' afterwards
+        if not packages:
+            raise Exception('received empty response')
+        return int(packages)
+
+    return try_retry(__get_packages_count)
 
 
 def get_package(package_index=None):
-    package = b''
-    while not package:
+    def __get_package(package_index):
         print('Connecting to server to get assigned work..')
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect(__server_address)
-                if package_index is None:
-                    sock.send(b'get\n')
-                else:
-                    request = 'getPackageIdx:' + str(package_index) + '\n'
-                    sock.send(request.encode())
-                package = sock.recv(256)
-        except socket.error:
-            print("network or server might be temporarily down.. will try again in 30 seconds..")
-            time.sleep(30)
-    return package.decode('utf-8')
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(__server_address)
+            if package_index is None:
+                sock.send(b'get\n')
+            else:
+                request = 'getPackageIdx:' + str(package_index) + '\n'
+                sock.send(request.encode())
+            package = sock.recv(256)
+        # TODO: sock.recv() sometimes hangs and returns b'' afterwards
+        if not package:
+            raise Exception('received empty response')
+        return package.decode('utf-8')
+
+    return try_retry(__get_package, fargs=(package_index,), max_tries=3, sleep_duration=30.0, sleep_factor=1.0)
 
 
 def __handle_remove_readonly(func, path, exc):
@@ -264,17 +303,17 @@ def __handle_remove_readonly(func, path, exc):
 def __remove_tree(folder_name):
     if not os.path.exists(folder_name):
         return
-    count = 5
-    while count > 0:
-        count -= 1
-        try:
-            shutil.rmtree(folder_name, onerror=__handle_remove_readonly)
-            break
-        except OSError as err:
-            time.sleep(30)
-            if count == 0:
-                print('Failed to cleanup {}: {}'.format(folder_name, err))
-                sys.exit(1)
+
+    def rmtree_func():
+        # pylint: disable=deprecated-argument - FIXME: onerror was deprecated in Python 3.12
+        shutil.rmtree(folder_name, onerror=__handle_remove_readonly)
+
+    print('Removing existing temporary data...')
+    try:
+        try_retry(rmtree_func, max_tries=5, sleep_duration=30, sleep_factor=1)
+    except Exception as e:
+        print('Failed to cleanup {}: {}'.format(folder_name, e))
+        sys.exit(1)
 
 
 def __wget(url, destfile, bandwidth_limit):
@@ -306,7 +345,6 @@ def download_package(work_path, package, bandwidth_limit):
 
 
 def unpack_package(work_path, tgz, cpp_only=False, c_only=False, skip_files=None):
-    print('Unpacking..')
     temp_path = os.path.join(work_path, 'temp')
     __remove_tree(temp_path)
     os.mkdir(temp_path)
@@ -324,6 +362,7 @@ def unpack_package(work_path, tgz, cpp_only=False, c_only=False, skip_files=None
 
     source_found = False
     if tarfile.is_tarfile(tgz):
+        print('Unpacking..')
         with tarfile.open(tgz) as tf:
             total = 0
             extracted = 0
@@ -365,13 +404,12 @@ def __run_command(cmd, print_cmd=True):
     if print_cmd:
         print(cmd)
     time_start = time.time()
-    comm = None
     if sys.platform == 'win32':
-        p = subprocess.Popen(shlex.split(cmd, comments=False, posix=False), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        p = subprocess.Popen(shlex.split(cmd, comments=False, posix=False), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, errors='surrogateescape')
     else:
-        p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, preexec_fn=os.setsid)
+        p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, errors='surrogateescape', preexec_fn=os.setsid)
     try:
-        comm = p.communicate(timeout=CPPCHECK_TIMEOUT)
+        stdout, stderr = p.communicate(timeout=CPPCHECK_TIMEOUT)
         return_code = p.returncode
         p = None
     except subprocess.TimeoutExpired:
@@ -384,21 +422,21 @@ def __run_command(cmd, print_cmd=True):
                 child.terminate()
             try:
                 # call with timeout since it might get stuck e.g. gcc-arm-none-eabi
-                comm = p.communicate(timeout=5)
+                stdout, stderr = p.communicate(timeout=5)
                 p = None
             except subprocess.TimeoutExpired:
                 pass
     finally:
         if p:
             os.killpg(os.getpgid(p.pid), signal.SIGTERM)  # Send the signal to all the process groups
-            comm = p.communicate()
+            stdout, stderr = p.communicate()
+            p = None
     time_stop = time.time()
-    stdout, stderr = comm
     elapsed_time = time_stop - time_start
     return return_code, stdout, stderr, elapsed_time
 
 
-def scan_package(cppcheck_path, source_path, libraries, capture_callstack=True):
+def scan_package(cppcheck_path, source_path, libraries, capture_callstack=True, enable='style,information', debug_warnings=True, check_level=None, extra_args=None):
     print('Analyze..')
     libs = ''
     for library in libraries:
@@ -407,9 +445,19 @@ def scan_package(cppcheck_path, source_path, libraries, capture_callstack=True):
 
     dir_to_scan = source_path
 
+    # TODO: temporarily disabled timing information - use --showtime=top5_summary when next version is released
     # Reference for GNU C: https://gcc.gnu.org/onlinedocs/cpp/Common-Predefined-Macros.html
-    options = libs + ' --showtime=top5 --check-library --inconclusive --enable=style,information --inline-suppr --suppress=unmatchedSuppression --template=daca2'
-    options += ' --debug-warnings --suppress=autoNoType --suppress=valueFlowBailout --suppress=bailoutUninitVar --suppress=symbolDatabaseWarning --suppress=valueFlowBailoutIncompleteVar'
+    options = '{} --inconclusive --enable={} --inline-suppr --template=daca2'.format(libs, enable)
+    if 'information' in enable:
+        # TODO: remove missingInclude disabling after 2.16 has been released
+        options += ' --disable=missingInclude --suppress=unmatchedSuppression'
+    if check_level:
+        options += ' --check-level=' + check_level
+    if extra_args:
+        options += ' ' + extra_args
+    if debug_warnings:
+        options += ' --check-library --debug-warnings --suppress=autoNoType --suppress=valueFlowBailout' \
+                   ' --suppress=bailoutUninitVar --suppress=symbolDatabaseWarning --suppress=normalCheckLevelConditionExpressions'
     options += ' -D__GNUC__ --platform=unix64'
     options_rp = options + ' -rp={}'.format(dir_to_scan)
     if __make_cmd == 'msbuild.exe':
@@ -471,7 +519,7 @@ def scan_package(cppcheck_path, source_path, libraries, capture_callstack=True):
                 sig_num = int(ie_line[sig_start_pos:ie_line.find(' ', sig_start_pos)])
             # break on the first signalled file for now
             break
-    print('cppcheck finished with ' + str(returncode) + ('' if sig_num == -1 else ' (signal ' + str(sig_num) + ')'))
+    print('cppcheck finished with ' + str(returncode) + ('' if sig_num == -1 else ' (signal ' + str(sig_num) + ')') + ' in {:.1f}s'.format(elapsed_time))
 
     options_j = options + ' ' + __jobs
 
@@ -497,7 +545,7 @@ def scan_package(cppcheck_path, source_path, libraries, capture_callstack=True):
                 cmd += dir_to_scan
             _, st_stdout, _, _ = __run_command(cmd)
             gdb_pos = st_stdout.find(" received signal")
-            if not gdb_pos == -1:
+            if gdb_pos != -1:
                 last_check_pos = st_stdout.rfind('Checking ', 0, gdb_pos)
                 if last_check_pos == -1:
                     stacktrace = st_stdout[gdb_pos:]
@@ -586,28 +634,27 @@ def __send_all(connection, data):
             bytes_ = None
 
 
+def __upload(cmd, data, cmd_info):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect(__server_address)
+        __send_all(sock, '{}\n{}'.format(cmd, data))
+    print('{} has been successfully uploaded.'.format(cmd_info))
+    return True
+
+
 def upload_results(package, results):
     if not __make_cmd == 'make':
         print('Error: Result upload not performed - only make build binaries are currently fully supported')
         return False
 
     print('Uploading results.. ' + str(len(results)) + ' bytes')
-    max_retries = 4
-    for retry in range(max_retries):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect(__server_address)
-                cmd = 'write\n'
-                __send_all(sock, cmd + package + '\n' + results + '\nDONE')
-            print('Results have been successfully uploaded.')
-            return True
-        except socket.error as err:
-            print('Upload error: ' + str(err))
-            if retry < (max_retries - 1):
-                print('Retrying upload in 30 seconds')
-                time.sleep(30)
-    print('Upload permanently failed!')
-    return False
+    try:
+        try_retry(__upload, fargs=('write\n' + package, results + '\nDONE', 'Result'), max_tries=20, sleep_duration=15, sleep_factor=1)
+    except Exception as e:
+        print('Result upload failed ({})!'.format(e))
+        return False
+
+    return True
 
 
 def upload_info(package, info_output):
@@ -616,21 +663,23 @@ def upload_info(package, info_output):
         return False
 
     print('Uploading information output.. ' + str(len(info_output)) + ' bytes')
-    max_retries = 3
-    for retry in range(max_retries):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect(__server_address)
-                __send_all(sock, 'write_info\n' + package + '\n' + info_output + '\nDONE')
-            print('Information output has been successfully uploaded.')
-            return True
-        except socket.error as err:
-            print('Upload error: ' + str(err))
-            if retry < (max_retries - 1):
-                print('Retrying upload in 30 seconds')
-                time.sleep(30)
-    print('Upload permanently failed!')
-    return False
+    try:
+        try_retry(__upload, fargs=('write_info\n' + package, info_output + '\nDONE', 'Information'), max_tries=20, sleep_duration=15, sleep_factor=1)
+    except Exception as e:
+        print('Information upload failed ({})!'.format(e))
+        return False
+
+    return True
+
+def upload_nodata(package):
+    print('Uploading no-data status..')
+    try:
+        try_retry(__upload, fargs=('write_nodata\n' + package, '', 'No-data status'), max_tries=3, sleep_duration=30, sleep_factor=1)
+    except Exception as e:
+        print('No-data upload failed ({})!'.format(e))
+        return False
+
+    return True
 
 
 class LibraryIncludes:
@@ -639,11 +688,12 @@ class LibraryIncludes:
                             'bsd': ['<sys/queue.h>', '<sys/tree.h>', '<sys/uio.h>','<bsd/', '<fts.h>', '<db.h>', '<err.h>', '<vis.h>'],
                             'cairo': ['<cairo.h>'],
                             'cppunit': ['<cppunit/'],
+                            'emscripten': ['<emscripten.h>'],
                             'icu': ['<unicode/', '"unicode/'],
                             'ginac': ['<ginac/', '"ginac/'],
                             'googletest': ['<gtest/gtest.h>'],
-                            'gtk': ['<gtk', '<glib.h>', '<glib-', '<glib/', '<gnome'],
-                            'kde': ['<KGlobal>', '<KApplication>', '<KDE/'],
+                            'gtk': ['<gtk', '<glib.h>', '<glib-', '<glib/', '<gdk/', '<gnome'],
+                            'kde': ['<KGlobal>', '<KApplication>', '<KLocalizedString>', '<KDE/', '<klocalizedstring.h>'],
                             'libcerror': ['<libcerror.h>'],
                             'libcurl': ['<curl/curl.h>'],
                             'libsigc++': ['<sigc++/'],
@@ -663,6 +713,7 @@ class LibraryIncludes:
                             'qt': ['<QAbstractSeries>', '<QAction>', '<QActionGroup>', '<QApplication>', '<QByteArray>', '<QChartView>', '<QClipboard>', '<QCloseEvent>', '<QColor>', '<QColorDialog>', '<QComboBox>', '<QCoreApplication>', '<QCryptographicHash>', '<QDate>', '<QDateTime>', '<QDateTimeAxis>', '<QDebug>', '<QDesktopServices>', '<QDialog>', '<QDialogButtonBox>', '<QDir>', '<QElapsedTimer>', '<QFile>', '<QFileDialog>', '<QFileInfo>', '<QFileInfoList>', '<QFlags>', '<QFont>', '<QFormLayout>', '<QHelpContentWidget>', '<QHelpEngine>', '<QHelpIndexWidget>', '<QImageReader>', '<QInputDialog>', '<QKeyEvent>', '<QLabel>', '<QLineSeries>', '<QList>', '<qlist.h>', '<QLocale>', '<QMainWindow>', '<QMap>', '<QMenu>', '<QMessageBox>', '<QMetaType>', '<QMimeData>', '<QMimeDatabase>', '<QMimeType>', '<QMutex>', '<QObject>', '<qobjectdefs.h>', '<QPainter>', '<QPlainTextEdit>', '<QPrintDialog>', '<QPrinter>', '<QPrintPreviewDialog>', '<QProcess>', '<QPushButton>', '<QQueue>', '<QReadWriteLock>', '<QRegularExpression>', '<QRegularExpressionValidator>', '<QSet>', '<QSettings>', '<QShortcut>', '<QSignalMapper>', '<QStandardItemModel>', '<QString>', '<qstring.h>', '<QStringList>', '<QSyntaxHighlighter>', '<QTest>', '<QTextBrowser>', '<QTextDocument>', '<QTextEdit>', '<QTextStream>', '<QThread>', '<QTimer>', '<QTranslator>', '<QTreeView>', '<QtWidgets>', '<QUrl>', '<QValueAxis>', '<QVariant>', '<QWaitCondition>', '<QWidget>', '<QXmlStreamReader>', '<QXmlStreamWriter>', '<QtGui'],
                             'ruby': ['<ruby.h>', '<ruby/', '"ruby.h"'],
                             'sdl': ['<SDL.h>', '<SDL/SDL.h>', '<SDL2/SDL.h>'],
+                            #'selinux': ['<selinux/'],
                             'sqlite3': ['<sqlite3.h>', '"sqlite3.h"'],
                             'tinyxml2': ['<tinyxml2', '"tinyxml2'],
                             'wxsqlite3': ['<wx/wxsqlite3', '"wx/wxsqlite3'],
@@ -691,9 +742,10 @@ class LibraryIncludes:
 
     def get_libraries(self, folder):
         print('Detecting library usage...')
-        libraries = ['posix', 'gnu']
+        libraries = ['posix', 'gnu', 'bsd']
 
-        library_includes_re = self.__library_includes_re
+        # explicitly copy as assignments in python are references
+        library_includes_re = copy.copy(self.__library_includes_re)
 
         def has_include(filedata):
             lib_del = []
@@ -713,10 +765,10 @@ class LibraryIncludes:
 def get_compiler_version():
     if __make_cmd == 'msbuild.exe':
         _, _, stderr, _ = __run_command('cl.exe', False)
-        return stderr.split('\n')[0]
+        return stderr.split('\n', maxsplit=1)[0]
 
     _, stdout, _, _ = __run_command('g++ --version', False)
-    return stdout.split('\n')[0]
+    return stdout.split('\n', maxsplit=1)[0]
 
 
 def get_client_version():

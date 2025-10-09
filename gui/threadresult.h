@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,16 +22,18 @@
 
 #include "color.h"
 #include "errorlogger.h"
-#include "importproject.h"
+#include "filesettings.h"
 
 #include <list>
+#include <mutex>
 #include <string>
 
-#include <QMutex>
 #include <QObject>
+#include <QString>
 #include <QStringList>
 
 class ErrorItem;
+class ImportProject;
 
 /// @addtogroup GUI
 /// @{
@@ -43,22 +45,20 @@ class ErrorItem;
 class ThreadResult : public QObject, public ErrorLogger {
     Q_OBJECT
 public:
-    ThreadResult();
-    ~ThreadResult() override;
+    ThreadResult() = default;
 
     /**
      * @brief Get next unprocessed file
-     * @return File path
      */
-    QString getNextFile();
+    void getNextFile(const FileWithDetails*& file);
 
-    ImportProject::FileSettings getNextFileSettings();
+    void getNextFileSettings(const FileSettings*& fs);
 
     /**
      * @brief Set list of files to check
      * @param files List of files to check
      */
-    void setFiles(const QStringList &files);
+    void setFiles(std::list<FileWithDetails> files);
 
     void setProject(const ImportProject &prj);
 
@@ -79,6 +79,10 @@ public:
      */
     void reportOut(const std::string &outmsg, Color c = Color::Reset) override;
     void reportErr(const ErrorMessage &msg) override;
+    void reportMetric(const std::string &metric) override
+    {
+        (void) metric;
+    }
 
 public slots:
 
@@ -126,39 +130,41 @@ protected:
      * @brief Mutex
      *
      */
-    mutable QMutex mutex;
+    mutable std::mutex mutex;
 
     /**
      * @brief List of files to check
      *
      */
-    QStringList mFiles;
+    std::list<FileWithDetails> mFiles;
+    std::list<FileWithDetails>::const_iterator mItNextFile{mFiles.cbegin()};
 
-    std::list<ImportProject::FileSettings> mFileSettings;
+    std::list<FileSettings> mFileSettings;
+    std::list<FileSettings>::const_iterator mItNextFileSettings{mFileSettings.cbegin()};
 
     /**
      * @brief Max progress
      *
      */
-    quint64 mMaxProgress;
+    quint64 mMaxProgress{};
 
     /**
      * @brief Current progress
      *
      */
-    quint64 mProgress;
+    quint64 mProgress{};
 
     /**
      * @brief Current number of files checked
      *
      */
-    unsigned long mFilesChecked;
+    unsigned long mFilesChecked{};
 
     /**
      * @brief Total number of files
      *
      */
-    unsigned long mTotalFiles;
+    unsigned long mTotalFiles{};
 };
 /// @}
 #endif // THREADRESULT_H

@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2021 Cppcheck team.
+ * Copyright (C) 2007-2024 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 //---------------------------------------------------------------------------
 
 #include "config.h"
+
 #include <memory>
 
 template<class T>
@@ -51,14 +52,7 @@ public:
             mPtr.reset(mClone(rhs.get()));
         }
     }
-    ValuePtr(ValuePtr&& rhs) : mPtr(std::move(rhs.mPtr)), mClone(std::move(rhs.mClone)) {}
-
-    /**
-     * Releases the shared_ptr's ownership of the managed object using the .reset() function
-     */
-    void release() {
-        mPtr.reset();
-    }
+    ValuePtr(ValuePtr&& rhs) NOEXCEPT : mPtr(std::move(rhs.mPtr)), mClone(std::move(rhs.mClone)) {}
 
     T* get() NOEXCEPT {
         return mPtr.get();
@@ -81,13 +75,13 @@ public:
         return get();
     }
 
-    void swap(ValuePtr& rhs) {
+    void swap(ValuePtr& rhs) NOEXCEPT {
         using std::swap;
         swap(mPtr, rhs.mPtr);
         swap(mClone, rhs.mClone);
     }
 
-    ValuePtr<T>& operator=(ValuePtr rhs) {
+    ValuePtr<T>& operator=(ValuePtr rhs) & {
         swap(rhs);
         return *this;
     }
@@ -96,7 +90,6 @@ public:
     operator bool() const NOEXCEPT {
         return !!mPtr;
     }
-    ~ValuePtr() {}
 
 private:
     std::shared_ptr<T> mPtr;

@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -61,10 +61,12 @@ public:
     /** This constructor is used when registering the CheckClass */
     explicit Check(const std::string &aname);
 
+protected:
     /** This constructor is used when running checks. */
     Check(std::string aname, const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
         : mTokenizer(tokenizer), mSettings(settings), mErrorLogger(errorLogger), mName(std::move(aname)) {}
 
+public:
     virtual ~Check() {
         if (!mTokenizer)
             instances().remove(this);
@@ -77,7 +79,7 @@ public:
     static std::list<Check *> &instances();
 
     /** run checks, the token list is not simplified */
-    virtual void runChecks(const Tokenizer *, const Settings *, ErrorLogger *) = 0;
+    virtual void runChecks(const Tokenizer &, ErrorLogger *) = 0;
 
     /** get error messages */
     virtual void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const = 0;
@@ -91,25 +93,24 @@ public:
     virtual std::string classInfo() const = 0;
 
     /**
-     * Write given error to errorlogger or to out stream in xml format.
+     * Write given error to stdout in xml format.
      * This is for for printout out the error list with --errorlist
      * @param errmsg Error message to write
      */
-    static void reportError(const ErrorMessage &errmsg);
+    static void writeToErrorList(const ErrorMessage &errmsg);
 
     /** Base class used for whole-program analysis */
     class CPPCHECKLIB FileInfo {
     public:
-        FileInfo() {}
-        virtual ~FileInfo() {}
+        explicit FileInfo(std::string f0 = {}) : file0(std::move(f0)) {}
+        virtual ~FileInfo() = default;
         virtual std::string toString() const {
             return std::string();
         }
+        std::string file0;
     };
 
-    virtual FileInfo * getFileInfo(const Tokenizer *tokenizer, const Settings *settings) const {
-        (void)tokenizer;
-        (void)settings;
+    virtual FileInfo * getFileInfo(const Tokenizer& /*tokenizer*/, const Settings& /*settings*/, const std::string& /*currentConfig*/) const {
         return nullptr;
     }
 
@@ -119,41 +120,35 @@ public:
     }
 
     // Return true if an error is reported.
-    virtual bool analyseWholeProgram(const CTU::FileInfo *ctu, const std::list<FileInfo*> &fileInfo, const Settings& /*settings*/, ErrorLogger & /*errorLogger*/) {
-        (void)ctu;
-        (void)fileInfo;
-        //(void)settings;
-        //(void)errorLogger;
+    virtual bool analyseWholeProgram(const CTU::FileInfo& /*ctu*/, const std::list<FileInfo*>& /*fileInfo*/, const Settings& /*settings*/, ErrorLogger & /*errorLogger*/) {
         return false;
     }
 
+protected:
     static std::string getMessageId(const ValueFlow::Value &value, const char id[]);
 
-protected:
-    const Tokenizer * const mTokenizer;
-    const Settings * const mSettings;
-    ErrorLogger * const mErrorLogger;
+    const Tokenizer* const mTokenizer{};
+    const Settings* const mSettings{};
+    ErrorLogger* const mErrorLogger{};
 
     /** report an error */
-    void reportError(const Token *tok, const Severity::SeverityType severity, const std::string &id, const std::string &msg) {
+    void reportError(const Token *tok, const Severity severity, const std::string &id, const std::string &msg) {
         reportError(tok, severity, id, msg, CWE(0U), Certainty::normal);
     }
 
     /** report an error */
-    void reportError(const Token *tok, const Severity::SeverityType severity, const std::string &id, const std::string &msg, const CWE &cwe, Certainty::CertaintyLevel certainty) {
+    void reportError(const Token *tok, const Severity severity, const std::string &id, const std::string &msg, const CWE &cwe, Certainty certainty) {
         const std::list<const Token *> callstack(1, tok);
         reportError(callstack, severity, id, msg, cwe, certainty);
     }
 
     /** report an error */
-    void reportError(const std::list<const Token *> &callstack, Severity::SeverityType severity, const std::string &id, const std::string &msg) {
-        reportError(callstack, severity, id, msg, CWE(0U), Certainty::normal);
-    }
+    void reportError(const std::list<const Token *> &callstack, Severity severity, const std::string &id, const std::string &msg, const CWE &cwe, Certainty certainty);
 
-    /** report an error */
-    void reportError(const std::list<const Token *> &callstack, Severity::SeverityType severity, const std::string &id, const std::string &msg, const CWE &cwe, Certainty::CertaintyLevel certainty);
+    void reportError(ErrorPath errorPath, Severity severity, const char id[], const std::string &msg, const CWE &cwe, Certainty certainty);
 
-    void reportError(const ErrorPath &errorPath, Severity::SeverityType severity, const char id[], const std::string &msg, const CWE &cwe, Certainty::CertaintyLevel certainty);
+    /** log checker */
+    void logChecker(const char id[]);
 
     ErrorPath getErrorPath(const Token* errtok, const ValueFlow::Value* value, std::string bug) const;
 

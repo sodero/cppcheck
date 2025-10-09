@@ -1,6 +1,6 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -43,23 +43,13 @@ public:
     /** @brief This constructor is used when registering the CheckClass */
     CheckString() : Check(myName()) {}
 
+private:
     /** @brief This constructor is used when running checks. */
     CheckString(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger)
         : Check(myName(), tokenizer, settings, errorLogger) {}
 
     /** @brief Run checks against the normal token list */
-    void runChecks(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger) override {
-        CheckString checkString(tokenizer, settings, errorLogger);
-
-        // Checks
-        checkString.strPlusChar();
-        checkString.checkSuspiciousStringCompare();
-        checkString.stringLiteralWrite();
-        checkString.overlappingStrcmp();
-        checkString.checkIncorrectStringCompare();
-        checkString.sprintfOverlappingData();
-        checkString.checkAlwaysTrueOrFalseStringCompare();
-    }
+    void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger) override;
 
     /** @brief undefined behaviour, writing string literal */
     void stringLiteralWrite();
@@ -82,7 +72,6 @@ public:
     /** @brief %Check for overlapping source and destination passed to sprintf() */
     void sprintfOverlappingData();
 
-private:
     void stringLiteralWriteError(const Token *tok, const Token *strValue);
     void sprintfOverlappingDataError(const Token *funcTok, const Token *tok, const std::string &varname);
     void strPlusCharError(const Token *tok);
@@ -94,21 +83,7 @@ private:
     void suspiciousStringCompareError_char(const Token* tok, const std::string& var);
     void overlappingStrcmpError(const Token* eq0, const Token *ne0);
 
-    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override {
-        CheckString c(nullptr, settings, errorLogger);
-
-        c.stringLiteralWriteError(nullptr, nullptr);
-        c.sprintfOverlappingDataError(nullptr, nullptr, "varname");
-        c.strPlusCharError(nullptr);
-        c.incorrectStringCompareError(nullptr, "substr", "\"Hello World\"");
-        c.suspiciousStringCompareError(nullptr, "foo", false);
-        c.suspiciousStringCompareError_char(nullptr, "foo");
-        c.incorrectStringBooleanError(nullptr, "\"Hello World\"");
-        c.incorrectStringBooleanError(nullptr, "\'x\'");
-        c.alwaysTrueFalseStringCompareError(nullptr, "str1", "str2");
-        c.alwaysTrueStringVariableCompareError(nullptr, "varname1", "varname2");
-        c.overlappingStrcmpError(nullptr, nullptr);
-    }
+    void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const override;
 
     static std::string myName() {
         return "String";

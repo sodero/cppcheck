@@ -1,4 +1,4 @@
-/*
+/* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
  * Copyright (C) 2007-2021 Cppcheck team.
  *
@@ -21,11 +21,15 @@
 
 #include <QFileSystemModel>
 #include <QMainWindow>
+#include <QObject>
 #include <QRegularExpression>
 #include <QString>
+#include <QStringList>
 
 class QListWidgetItem;
 class QTextStream;
+class QPoint;
+class QWidget;
 namespace Ui {
     class MainWindow;
 }
@@ -58,7 +62,7 @@ private:
     bool runProcess(const QString &programName, const QStringList & arguments);
     bool wget(const QString &url);
     bool unpackArchive(const QString &archiveName);
-    void showSrcFile(const QString &fileName, const QString &url, const int lineNumber);
+    void showSrcFile(const QString &fileName, const QString &url, int lineNumber);
 
     QStringList mAllErrors;
     QFileSystemModel mFSmodel;

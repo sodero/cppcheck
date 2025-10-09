@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2022 Cppcheck team.
+ * Copyright (C) 2007-2025 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "testsuite.h"
+#include "fixture.h"
 #include "timer.h"
 
 #include <cmath>
@@ -34,7 +34,7 @@ private:
 
     void result() const {
         TimerResultsData t1;
-        t1.mClocks = ~(std::clock_t)0;
+        t1.mClocks = ~static_cast<std::clock_t>(0);
         ASSERT(t1.seconds() > 100.0);
 
         t1.mClocks = CLOCKS_PER_SEC * 5 / 2;
