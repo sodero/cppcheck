@@ -73,7 +73,7 @@
 #include <windows.h>
 #endif
 
-#if !defined(WIN32) && !defined(__MINGW32__)
+#if !defined(WIN32) && !defined(__MINGW32__) && !defined(__AMIGA__)
 #include <sys/wait.h> // WIFEXITED and friends
 #endif
 
@@ -783,7 +783,7 @@ int CppCheckExecutor::executeCommand(std::string exe, std::vector<std::string> a
         //std::cout << "pclose() errno " << std::to_string(err) << std::endl;
         return res;
     }
-#if !defined(WIN32) && !defined(__MINGW32__)
+#if !defined(WIN32) && !defined(__MINGW32__) && !defined(__AMIGA__)
     if (WIFEXITED(res)) {
         return WEXITSTATUS(res);
     }

@@ -164,12 +164,16 @@ static const std::string emptyString;
 #define HAS_THREADING_MODEL_THREAD
 #define STDCALL __stdcall
 #elif ((defined(__GNUC__) || defined(__sun)) && !defined(__MINGW32__)) || defined(__CPPCHECK__)
+#if !defined(DISALLOW_PROCESS_EXECUTOR)
 #define HAS_THREADING_MODEL_FORK
+#endif
 #if !defined(DISALLOW_THREAD_EXECUTOR)
 #define HAS_THREADING_MODEL_THREAD
 #endif
 #define STDCALL
-#else
+#endif
+
+#if !defined(HAS_THREADING_MODEL_FORK) && !defined(HAS_THREADING_MODEL_THREAD)
 #error "No threading model defined"
 #endif
 
@@ -211,7 +215,7 @@ static const std::string emptyString;
 #define USE_WINDOWS_SEH
 #endif
 
-#if !defined(NO_UNIX_BACKTRACE_SUPPORT) && defined(__GNUC__) && !defined(__APPLE__) && !defined(__CYGWIN__) && !defined(__MINGW32__) && !defined(__NetBSD__) && !defined(__OpenBSD__) && !defined(__SVR4) && !defined(__QNX__)
+#if !defined(NO_UNIX_BACKTRACE_SUPPORT) && defined(__GNUC__) && !defined(__APPLE__) && !defined(__CYGWIN__) && !defined(__MINGW32__) && !defined(__NetBSD__) && !defined(__OpenBSD__) && !defined(__SVR4) && !defined(__QNX__) && !defined(__AMIGA__)
 #define USE_UNIX_BACKTRACE_SUPPORT
 #endif
 
