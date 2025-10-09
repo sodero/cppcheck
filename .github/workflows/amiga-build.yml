@@ -1,0 +1,32 @@
+name: AmigaOS4/AROS/MorphOS build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.build-type }} - ${{ matrix.platform.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        platform:
+          - name: AmigaOS4
+            image: rolfkopman/os4env
+            mount: /opt/code
+            args: RDYNAMIC= LTHREADS="-athread=native" CXXFLAGS="-mcrt=clib2 -DDISALLOW_PROCESS_EXECUTOR -DNO_UNIX_SIGNAL_HANDLING"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Compile
+      run: |
+        docker run --rm \
+          -v ${{ github.workspace }}:${{ matrix.platform.mount }} \
+          -w ${{ matrix.platform.mount }} \
+          ${{ matrix.platform.image }} make ${{ matrix.platform.args }}
