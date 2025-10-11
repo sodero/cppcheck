@@ -18,7 +18,7 @@ jobs:
           - name: AmigaOS4
             image: rolfkopman/os4env
             mount: /opt/code
-            args: RDYNAMIC= LTHREADS="-athread=native" CXXFLAGS="-mcrt=clib2 -DDISALLOW_PROCESS_EXECUTOR -DNO_UNIX_SIGNAL_HANDLING"
+            args: RDYNAMIC= LTHREADS="-athread=native" CXXFLAGS="-mcrt=clib2 -DDISALLOW_PROCESS_EXECUTOR -DNO_UNIX_SIGNAL_HANDLING -DNO_UNIX_BACKTRACE_SUPPORT"
          # - name: AROS i386 ABI V0
          #   image: rolfkopman/arosi386v0env
          #   mount: /opt/code
@@ -28,7 +28,7 @@ jobs:
           - name: MorphOS
             image: rolfkopman/mosenv
             mount: /gg/code
-            args: RDYNAMIC= CXXFLAGS="-DDISALLOW_PROCESS_EXECUTOR -DNO_UNIX_SIGNAL_HANDLING"
+            args: RDYNAMIC= CXXFLAGS="-DDISALLOW_PROCESS_EXECUTOR -DNO_UNIX_SIGNAL_HANDLING -DNO_UNIX_BACKTRACE_SUPPORT"
 
 
     steps:
