@@ -2,9 +2,9 @@ name: AmigaOS4/AROS/MorphOS build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ amiga ]
   pull_request:
-    branches: [ main ]
+    branches: [ amiga ]
   workflow_dispatch:
 
 jobs:
