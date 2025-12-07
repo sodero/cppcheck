@@ -32,7 +32,6 @@ jobs:
             mount: /gg/code
             args: RDYNAMIC= CXXFLAGS="-DDISALLOW_PROCESS_EXECUTOR -DNO_UNIX_SIGNAL_HANDLING -DNO_UNIX_BACKTRACE_SUPPORT" FILESDIR="PROGDIR:"
 
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

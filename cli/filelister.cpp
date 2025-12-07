@@ -191,6 +191,28 @@ std::string FileLister::addFiles(std::list<FileWithDetails> &files, const std::s
 #include <sys/stat.h>
 #include <cerrno>
 
+#ifndef NAME_MAX
+#ifdef MAXNAMLEN
+#define NAME_MAX MAXNAMLEN
+#endif
+#endif
+
+#if defined(__AMIGA__)
+static int readdir_r(DIR *dir, struct dirent *buf, struct dirent **result)
+{
+    struct dirent *entry = readdir(dir);
+
+    if(!entry)
+    {
+        *result = NULL;
+        return errno;
+    }
+
+    *result = (struct dirent *) memcpy(buf, entry, sizeof(dirent));
+    return 0;
+}
+#endif
+
 struct closedir_deleter {
     void operator()(DIR* d) const {
         closedir(d);
