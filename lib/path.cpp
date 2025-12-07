@@ -456,5 +456,9 @@ std::string Path::join(std::string path1, std::string path2)
     // this matches the behavior of std::filesystem::path::operator/=() and os.path.join()
     if (path2.front() == '/')
         return path2;
+#ifndef __AMIGA__
     return ((path1.back() == '/') ? path1 : (path1 + "/")) + path2;
+#else
+    return ((path1.back() == '/' || path1.back() == ':') ? path1 : (path1 + "/")) + path2;
+#endif
 }
