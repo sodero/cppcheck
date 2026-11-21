@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,7 +34,7 @@
 
 class Settings;
 class SymbolDatabase;
-class TimerResults;
+class TimerResultsIntf;
 class Token;
 class TemplateSimplifier;
 class ErrorLogger;
@@ -53,7 +53,7 @@ public:
     Tokenizer(TokenList tokenList, ErrorLogger &errorLogger);
     ~Tokenizer();
 
-    void setTimerResults(TimerResults *tr) {
+    void setTimerResults(TimerResultsIntf *tr) {
         mTimerResults = tr;
     }
 
@@ -376,17 +376,25 @@ private:
 
 public:
 
-    /** Syntax error */
+    /** Syntax error
+     * @throws InternalError thrown unconditionally
+     */
     NORETURN void syntaxError(const Token *tok, const std::string &code = "") const;
 
-    /** Syntax error. Unmatched character. */
+    /** Syntax error. Unmatched character.
+     * @throws InternalError thrown unconditionally
+     */
     NORETURN void unmatchedToken(const Token *tok) const;
 
 private:
-    /** Syntax error. C++ code in C file. */
+    /** Syntax error. C++ code in C file.
+     * @throws InternalError thrown unconditionally
+     */
     NORETURN void syntaxErrorC(const Token *tok, const std::string &what) const;
 
-    /** Warn about unknown macro(s), configuration is recommended */
+    /** Warn about unknown macro(s), configuration is recommended
+     * @throws InternalError thrown unconditionally
+     */
     NORETURN void unknownMacroError(const Token *tok1) const;
 
     void unhandledCharLiteral(const Token *tok, const std::string& msg) const;
@@ -521,6 +529,11 @@ private:
     void simplifyNamespaceAliases();
 
     /**
+     * Handle std::aligned_storage<...>
+     */
+    void simplifyAlignedStorage();
+
+    /**
      * Convert C++17 style nested namespace to older style
      */
     void simplifyNestedNamespace();
@@ -601,7 +614,7 @@ public:
     /**
      * Helper function to check whether number is one (1 or 0.1E+1 or 1E+0) or not?
      * @param s the string to check
-     * @return true in case is is one and false otherwise.
+     * @return true in case it is one and false otherwise.
      */
     static bool isOneNumber(const std::string &s);
 
@@ -612,6 +625,13 @@ public:
      * @return pointer to start brace of function scope or nullptr if not start.
      */
     static const Token * startOfExecutableScope(const Token * tok);
+
+    /**
+     * Helper function to check whether tok is the declaration of a function pointer
+     * @param tok the Token to check
+     * @return true in case tok is a function pointer and false otherwise.
+     */
+    static bool isFunctionPointer(const Token* tok);
 
     const Settings &getSettings() const {
         return mSettings;
@@ -678,11 +698,14 @@ private:
     };
     struct TypedefInfo {
         std::string name;
+        std::string originalName;
         std::string filename;
-        int lineNumber;
-        int column;
-        bool used;
-        bool isFunctionPointer;
+        int lineNumber{};
+        int column{};
+        int tagLine{-1};
+        int tagColumn{-1};
+        bool used{};
+        bool isFunctionPointer{};
         std::vector<TypedefToken> typedefInfoTokens;
     };
     std::vector<TypedefInfo> mTypedefInfo;
@@ -696,9 +719,9 @@ private:
     nonneg int mUnnamedCount{};
 
     /**
-     * TimerResults
+     * timer results
      */
-    TimerResults* mTimerResults{};
+    TimerResultsIntf* mTimerResults{};
 };
 
 /// @}

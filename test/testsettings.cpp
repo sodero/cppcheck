@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,6 +42,9 @@ private:
         TEST_CASE(getMaxConfigsDefines);
         TEST_CASE(getMaxConfigsDefinesAndOpt);
         TEST_CASE(getMaxConfigsOptAndProject);
+
+        TEST_CASE(isPremiumEnabledCert);
+        TEST_CASE(isPremiumEnabledMisra);
     }
 
     void simpleEnableGroup() const {
@@ -236,6 +239,21 @@ private:
                             R"({"suppressions": [1]}\n)");
             ASSERT_EQUALS("'suppressions' array entry is not a string", Settings::loadCppcheckCfg(s, supprs));
         }
+        {
+            Settings s;
+            Suppressions supprs;
+            ScopedFile file("cppcheck.cfg",
+                            R"({"manualUrl": "https://docs.notcppcheck.com/manual.pdf"})");
+            ASSERT_EQUALS("", Settings::loadCppcheckCfg(s, supprs));
+            ASSERT_EQUALS("https://docs.notcppcheck.com/manual.pdf", s.manualUrl);
+        }
+        {
+            Settings s;
+            Suppressions supprs;
+            ScopedFile file("cppcheck.cfg",
+                            R"({"manualUrl": 0}\n)");
+            ASSERT_EQUALS("'manualUrl' is not a string", Settings::loadCppcheckCfg(s, supprs));
+        }
 
         // TODO: test with FILESDIR
     }
@@ -340,6 +358,38 @@ private:
         ASSERT_EQUALS(3, s.getMaxConfigs());
         s.maxConfigsProject = 10;
         ASSERT_EQUALS(3, s.getMaxConfigs());
+    }
+
+    void isPremiumEnabledCert() const {
+        Settings s;
+        s.premiumArgs = "--cert-c-2016";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--cert-c";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--cert-c:all";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--cert-c++";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--cert-cpp";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+    }
+
+    void isPremiumEnabledMisra() const {
+        Settings s;
+        s.premiumArgs = "--misra-c-2012";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--misra-c-2023";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--misra-c-2025";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--misra-cpp-2008";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--misra-c++-2008";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--misra-cpp-2023";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
+        s.premiumArgs = "--misra-c++-2023";
+        ASSERT(s.isPremiumEnabled("uninitvar"));
     }
 };
 

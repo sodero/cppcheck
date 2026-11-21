@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -80,7 +80,6 @@ enum class TokenDebug : std::uint8_t { None, ValueFlow, ValueType };
  * The Token class also has other functions for management of token list, matching tokens, etc.
  */
 class CPPCHECKLIB Token {
-    friend class TestToken;
 
 public:
     enum CppcheckAttributesType : std::uint8_t { LOW, HIGH };
@@ -117,6 +116,7 @@ private:
         Token* mAstOperand1{};
         Token* mAstOperand2{};
         Token* mAstParent{};
+        Token* mAstTop{};
 
         // symbol database information
         const Scope* mScope{};
@@ -172,8 +172,10 @@ private:
         std::unique_ptr<SmallVector<ReferenceToken>> mRefs;
         std::unique_ptr<SmallVector<ReferenceToken>> mRefsTemp;
 
-        void setCppcheckAttribute(CppcheckAttributesType type, MathLib::bigint value);
-        bool getCppcheckAttribute(CppcheckAttributesType type, MathLib::bigint &value) const;
+        std::int8_t mMutableExpr{-1};
+
+        void setCppcheckAttribute(CppcheckAttributesType attrType, MathLib::bigint value);
+        bool getCppcheckAttribute(CppcheckAttributesType attrType, MathLib::bigint &value) const;
 
         Impl() = default;
         ~Impl();
@@ -247,35 +249,35 @@ public:
      * For example index 1 would return next token, and 2
      * would return next from that one.
      */
-    const Token *tokAt(int index) const
+    const Token *tokAt(int idx) const
     {
-        return tokAtImpl(this, index);
+        return tokAtImpl(this, idx);
     }
-    Token *tokAt(int index)
+    Token *tokAt(int idx)
     {
-        return tokAtImpl(this, index);
+        return tokAtImpl(this, idx);
     }
 
     /**
      * @return the link to the token in given index, related to this token.
      * For example index 1 would return the link to next token.
      */
-    const Token *linkAt(int index) const
+    const Token *linkAt(int idx) const
     {
-        return linkAtImpl(this, index);
+        return linkAtImpl(this, idx);
     }
-    Token *linkAt(int index)
+    Token *linkAt(int idx)
     {
-        return linkAtImpl(this, index);
+        return linkAtImpl(this, idx);
     }
 
     /**
      * @return String of the token in given index, related to this token.
      * If that token does not exist, an empty string is being returned.
      */
-    const std::string &strAt(int index) const
+    const std::string &strAt(int idx) const
     {
-        const Token *tok = this->tokAt(index);
+        const Token *tok = this->tokAt(idx);
         return tok ? tok->mStr : mEmptyString;
     }
 
@@ -602,11 +604,11 @@ public:
     bool hasAttributeCleanup() const {
         return !mImpl->mAttributeCleanup.empty();
     }
-    void setCppcheckAttribute(CppcheckAttributesType type, MathLib::bigint value) {
-        mImpl->setCppcheckAttribute(type, value);
+    void setCppcheckAttribute(CppcheckAttributesType attrType, MathLib::bigint value) {
+        mImpl->setCppcheckAttribute(attrType, value);
     }
-    bool getCppcheckAttribute(CppcheckAttributesType type, MathLib::bigint &value) const {
-        return mImpl->getCppcheckAttribute(type, value);
+    bool getCppcheckAttribute(CppcheckAttributesType attrType, MathLib::bigint &value) const {
+        return mImpl->getCppcheckAttribute(attrType, value);
     }
     // cppcheck-suppress unusedFunction
     bool hasCppcheckAttributes() const {
@@ -730,11 +732,11 @@ public:
         setFlag(fIsTemplate, b);
     }
 
-    bool isSimplifiedScope() const {
-        return getFlag(fIsSimplifedScope);
+    bool isSimplifiedIfInitStmt() const {
+        return getFlag(fIsSimplifiedIfInitStmt);
     }
-    void isSimplifiedScope(bool b) {
-        setFlag(fIsSimplifedScope, b);
+    void isSimplifiedIfInitStmt(bool b) {
+        setFlag(fIsSimplifiedIfInitStmt, b);
     }
 
     bool isFinalType() const {
@@ -763,6 +765,14 @@ public:
     }
     void isAnonymous(bool b) {
         setFlag(fIsAnonymous, b);
+    }
+
+    bool isInsertedBrace() const {
+        return getFlag(fIsInsertedBrace);
+    }
+    Token* isInsertedBrace(bool b) {
+        setFlag(fIsInsertedBrace, b);
+        return this;
     }
 
     // cppcheck-suppress unusedFunction
@@ -870,8 +880,8 @@ public:
     }
     static const Token *findsimplematch(const Token * startTok, const char pattern[], size_t pattern_len, const Token * end);
 
-    static const Token *findmatch(const Token * startTok, const char pattern[], nonneg int varId = 0);
-    static const Token *findmatch(const Token * startTok, const char pattern[], const Token * end, nonneg int varId = 0);
+    static const Token *findmatch(const Token * startTok, const char pattern[], nonneg int varid = 0);
+    static const Token *findmatch(const Token * startTok, const char pattern[], const Token * end, nonneg int varid = 0);
 
     template<size_t count>
     static Token *findsimplematch(Token * const startTok, const char (&pattern)[count]) {
@@ -884,34 +894,38 @@ public:
     }
     static Token *findsimplematch(Token * startTok, const char pattern[], size_t pattern_len, const Token * end);
 
-    static Token *findmatch(Token * startTok, const char pattern[], nonneg int varId = 0);
-    static Token *findmatch(Token * startTok, const char pattern[], const Token * end, nonneg int varId = 0);
+    static Token *findmatch(Token * startTok, const char pattern[], nonneg int varid = 0);
+    static Token *findmatch(Token * startTok, const char pattern[], const Token * end, nonneg int varid = 0);
 
 private:
     template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    static T *tokAtImpl(T *tok, int index)
+    static T *tokAtImpl(T *tok, int idx)
     {
-        while (index > 0 && tok) {
+        while (idx > 0 && tok) {
             tok = tok->next();
-            --index;
+            --idx;
         }
-        while (index < 0 && tok) {
+        while (idx < 0 && tok) {
             tok = tok->previous();
-            ++index;
+            ++idx;
         }
         return tok;
     }
 
+    /**
+     * @throws InternalError thrown if index is out of range
+     */
     template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-    static T *linkAtImpl(T *thisTok, int index)
+    static T *linkAtImpl(T *thisTok, int idx)
     {
-        T *tok = thisTok->tokAt(index);
+        T *tok = thisTok->tokAt(idx);
         if (!tok) {
             throw InternalError(thisTok, "Internal error. Token::linkAt called with index outside the tokens range.");
         }
         return tok->link();
     }
 
+protected:
     /**
      * Needle is build from multiple alternatives. If one of
      * them is equal to haystack, return value is 1. If there
@@ -1104,7 +1118,7 @@ public:
             options.files = true;
             return options;
         }
-        // cppcheck-suppress unusedFunction
+        // cppcheck-suppress unusedFunction - used in tests only
         static stringifyOptions forDebugVarId() {
             stringifyOptions options = forDebug();
             options.varid = true;
@@ -1136,7 +1150,6 @@ public:
 
     std::string stringifyList(const stringifyOptions& options, const std::vector<std::string>* fileNames = nullptr, const Token* end = nullptr) const;
     std::string stringifyList(const Token* end, bool attributes = true) const;
-    std::string stringifyList(bool varid = false) const;
 
     /**
      * Stringify a list of token, from current instance on.
@@ -1262,7 +1275,7 @@ public:
 
     static std::string typeStr(const Token* tok);
 
-    static bool isStandardType(const std::string& str);
+    static bool isStandardType(const std::string& s);
 
     /**
      * @return a pointer to the Enumerator associated with this token.
@@ -1360,6 +1373,9 @@ public:
     // provides and caches result of a followAllReferences() call
     const SmallVector<ReferenceToken>& refs(bool temporary = true) const;
 
+    // provides and caches the result of a isMutableExpression() call
+    bool isMutableExpr() const;
+
     /**
      * Sets the original name.
      */
@@ -1431,17 +1447,17 @@ private:
 
     /**
      * Works almost like strcmp() except returns only true or false and
-     * if str has empty space &apos; &apos; character, that character is handled
+     * if s has empty space &apos; &apos; character, that character is handled
      * as if it were &apos;\\0&apos;
      */
-    static bool firstWordEquals(const char *str, const char *word);
+    static bool firstWordEquals(const char *s, const char *word);
 
     /**
      * Works almost like strchr() except
-     * if str has empty space &apos; &apos; character, that character is handled
+     * if s has empty space &apos; &apos; character, that character is handled
      * as if it were &apos;\\0&apos;
      */
-    static const char *chrInFirstWord(const char *str, char c);
+    static const char *chrInFirstWord(const char *s, char c);
 
     RET_NONNULL Token* insertToken(const std::string& tokenStr, bool prepend);
     RET_NONNULL Token* insertToken(const std::string& tokenStr, const std::string& originalNameStr, bool prepend);
@@ -1490,7 +1506,7 @@ private:
         fIsImplicitInt          = (1ULL << 33), // Is "int" token implicitly added?
         fIsInline               = (1ULL << 34), // Is this a inline type
         fIsTemplate             = (1ULL << 35),
-        fIsSimplifedScope       = (1ULL << 36), // scope added when simplifying e.g. if (int i = ...; ...)
+        fIsSimplifiedIfInitStmt = (1ULL << 36), // simplified if/switch/while init statement e.g. if (int i = ...; ...) => { int i = ...; if (..) ..  }
         fIsRemovedVoidParameter = (1ULL << 37), // A void function parameter has been removed
         fIsIncompleteConstant   = (1ULL << 38),
         fIsRestrict             = (1ULL << 39), // Is this a restrict pointer type
@@ -1500,6 +1516,7 @@ private:
         fIsInitComma            = (1ULL << 43), // Is this comma located inside some {..}. i.e: {1,2,3,4}
         fIsInitBracket          = (1ULL << 44), // Is this bracket used as a part of variable initialization i.e: int a{5}, b(2);
         fIsAnonymous            = (1ULL << 45), // Is this a token added for an unnamed member
+        fIsInsertedBrace        = (1ULL << 46), // brace added when simplifying e.g. if (x) f(); => if (x) { f(); }
     };
 
     enum : std::uint8_t {
@@ -1532,7 +1549,9 @@ private:
     }
 
     /** Updates internal property cache like _isName or _isBoolean.
-        Called after any mStr() modification. */
+        Called after any mStr() modification.
+        @throws InternalError thrown if a bool literal has a varid
+     */
     void update_property_info();
 
     /** Update internal property cache about isStandardType() */
@@ -1548,7 +1567,13 @@ private:
 public:
     void astOperand1(Token *tok);
     void astOperand2(Token *tok);
+    /**
+     * @throws InternalError thrown on cyclic dependency
+     */
     void astParent(Token* tok);
+    void astTop(Token * tok) {
+        mImpl->mAstTop = tok;
+    }
 
     Token * astOperand1() {
         return mImpl->mAstOperand1;
@@ -1589,6 +1614,9 @@ public:
 
     }
     RET_NONNULL Token *astTop() {
+        if (mImpl->mAstTop) {
+            return mImpl->mAstTop;
+        }
         Token *ret = this;
         while (ret->mImpl->mAstParent)
             ret = ret->mImpl->mAstParent;
@@ -1596,12 +1624,18 @@ public:
     }
 
     RET_NONNULL const Token *astTop() const {
+        if (mImpl->mAstTop) {
+            return mImpl->mAstTop;
+        }
         const Token *ret = this;
         while (ret->mImpl->mAstParent)
             ret = ret->mImpl->mAstParent;
         return ret;
     }
 
+    /**
+     * @throws InternalError thrown if start or end cannot be found
+     */
     std::pair<const Token *, const Token *> findExpressionStartEndTokens() const;
 
     /**

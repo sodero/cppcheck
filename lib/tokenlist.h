@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@ public:
     TokenList(const TokenList &) = delete;
     TokenList &operator=(const TokenList &) = delete;
 
-    TokenList(TokenList&& other) NOEXCEPT = default;
+    TokenList(TokenList&& other) noexcept = default;
 
     /** @return the source file path. e.g. "file.cpp" */
     const std::string& getSourceFilePath() const;
@@ -99,14 +99,14 @@ public:
      * - UTF in the code are not handled.
      * - comments are not handled.
      */
-    bool createTokensFromBuffer(const uint8_t* data, size_t size);
-    bool createTokensFromBuffer(const char* data, size_t size) {
-        return createTokensFromBuffer(reinterpret_cast<const uint8_t*>(data), size);
+    bool createTokensFromBuffer(const uint8_t* data, size_t size) {
+        return createTokensFromBuffer(reinterpret_cast<const char*>(data), size);
     }
+    bool createTokensFromBuffer(const char* data, size_t size);
     template<size_t size>
     // cppcheck-suppress unusedFunction - used in tests only
     bool createTokensFromString(const char (&data)[size]) {
-        return createTokensFromBuffer(reinterpret_cast<const uint8_t*>(data), size-1);
+        return createTokensFromBuffer(data, size-1);
     }
 
     void createTokens(simplecpp::TokenList&& tokenList);
@@ -168,12 +168,13 @@ public:
 
     /**
      * Create abstract syntax tree.
+     * @throws InternalError thrown if encountering an infinite loop in AST creation
      */
     void createAst() const;
 
     /**
      * Check abstract syntax tree.
-     * Throws InternalError on failure
+     * @throws InternalError thrown if validation fails
      */
     void validateAst(bool print) const;
 
@@ -205,17 +206,17 @@ public:
     /**
      * is token pointing at function head?
      * @param tok         A '(' or ')' token in a possible function head
-     * @param endsWith    string after function head
-     * @return token matching with endsWith if syntax seems to be a function head else nullptr
+     * @param suffix      string after function head
+     * @return token matching with suffix if syntax seems to be a function head else nullptr
      */
-    static const Token * isFunctionHead(const Token *tok, const std::string &endsWith);
+    static const Token * isFunctionHead(const Token *tok, const std::string &suffix);
 
     const Settings& getSettings() const {
         return mSettings;
     }
 
 private:
-    bool createTokensFromBufferInternal(const uint8_t* data, std::size_t size, const std::string& file0);
+    bool createTokensFromBufferInternal(const char* data, std::size_t size, const std::string& file0);
 
     /** Token list */
     std::shared_ptr<TokensFrontBack> mTokensFrontBack;

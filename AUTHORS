@@ -1,6 +1,7 @@
 The cppcheck team, in alphabetical order:
 
 0x41head
+Aaron Danen
 Abhijit Sawant
 Abhishek Bharadwaj
 Abigail Buccaneer
@@ -22,6 +23,7 @@ Alexey Eryomenko
 Alexey Zhikhartsev
 Alfi Maulana
 Ali Can Demiralp
+Alvin Che-Chia Chang
 Allen Winter
 Alon Alexander
 Alon Liberman
@@ -33,6 +35,7 @@ Andreas Lutsch
 Andreas Pokorny
 Andreas Rönnquist
 Andreas Vollenweider
+Andreas Wilhelm
 Andrei Karas
 Andrew C Aitchison
 Andrew C. Martin
@@ -94,17 +97,21 @@ Cilyan Olowen
 Claus Jensby Madsen
 Colomban Wendling
 Conrado Gouvea
+correctmost
 daisuke-chiba
 Daniel Friedrich
 David Korczynski
 Daniel Marjamäki
+Daschle Newberry
 David Hallas
 David Korth
+David Ramnerö
 Dávid Slivka
 Debrard Sebastien
 Deepak Gupta
 Degen's Regens
 dencat
+Devansh Varshney
 Diego de las Heras
 Dirk Jagdmann
 Dirk Mueller
@@ -130,7 +137,9 @@ Felipe Pena
 Felix Faber
 Felix Geyer
 Felix Passenberg
+Felix Patschkowski
 Felix Wolff
+Florian Mueller
 Florin Iucha
 flovent
 Francesc Elies
@@ -139,6 +148,7 @@ Frank Winklmeier
 Frank Zingsheim
 Frederik Schwarzer
 fu7mu4
+Gaël Bonithon
 Galimov Albert
 Garrett Bodily
 Gary Leutheuser
@@ -151,6 +161,7 @@ Gerhard Zlabinger
 Gerik Rhoden
 Gianfranco Costamagna
 Gianluca Scacco
+Gilmar Santos Jr
 Gleydson Soares
 Goncalo Mao-Cheia
 Goran Džaferi
@@ -181,10 +192,13 @@ Jan Egil Ruud
 Jan Hellwig
 János Maros
 Jay Sigbrandt
+Jean-François Deverge
 Jedrzej Klocek
+Jeewoong Kim
 Jens Bäckman
 Jens Yllman
 Jérémy Lefaure
+Jérôme Duval
 Jes Ramsing
 Jesse Boswell
 Jim Kuhn
@@ -192,6 +206,7 @@ Jim Zhou
 jlguardi
 Joel Johnson
 Johan Bertrand
+Johan Crone
 Johan Samuelson
 John Marshall
 John-Paul Ore
@@ -200,6 +215,7 @@ Jonathan Clohessy
 Jonathan Haehne
 Jonathan Neuschäfer
 Jonathan Thackray
+Jonny Paton
 José Martins
 Jose Roquette
 Joshua Beck
@@ -251,6 +267,7 @@ Maarten van der Schrieck
 Maksim Derbasov
 Malcolm Parsons
 Marc-Antoine Perennou
+Marcel Petrick
 Marcel Raad
 Marco Trevisan
 Marek Zmysłowski
@@ -258,6 +275,7 @@ Marian Klymov
 Mark de Wever
 Mark Hermeling
 Markus Elfring
+Martin Boye Petersen
 Martin Delille
 Martin Ettl
 Martin Exner
@@ -277,6 +295,7 @@ Matthias Schmieder
 Matt Johnson
 Maurice Gilden
 Mavik
+Melroy van den Berg
 Michael Drake
 Michael Løiten
 Miika-Petteri Matikainen
@@ -299,6 +318,7 @@ Nicolás Alvarez
 Nicolas Le Cam
 Nilesh Kumar
 Ogawa KenIchi
+Ola Söder
 Oleksandr Labetskyi
 Oleksandr Redko
 Oliver Schode
@@ -321,6 +341,7 @@ Philip Chimento
 Philipp Kloke
 Pierre Schweitzer
 Pieter Duchi
+Piotr Idzik
 Pino Toscano
 Pranav Khanna
 Radek Jarecki
@@ -341,6 +362,7 @@ Robert Habrich
 Robert Morin
 Roberto Martelloni
 Robert Reif
+Robin Getz
 rofl0r
 Roman Zaytsev Borisovich
 Ronald Hiemstra
@@ -356,6 +378,7 @@ Samuel Degrande
 Samuel Poláček
 Sandeep Dutta
 Savvas Etairidis
+Sayed Kaif
 Scott Ehlert
 Scott Furry
 Seafarix Ltd.
@@ -422,10 +445,12 @@ Vesa Pikki
 Ville-Pekka Vahteala
 Ville Skyttä
 Vincent Le Garrec
+Vít Kučera
 Vladimir Petrigo
 Wang Haoyu
 Wang Yang
 WenChung Chiu
+William Jakobsson
 Wolfgang Stöggl
 x29a
 XhmikosR

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -113,15 +113,23 @@ ScopedFile::~ScopedFile() {
 
 void SimpleTokenizer2::preprocess(const char* code, std::size_t size, std::vector<std::string> &files, const std::string& file0, Tokenizer& tokenizer, ErrorLogger& errorlogger)
 {
-    simplecpp::TokenList tokens1(code, size, files, file0);
+    const Standards &standards = tokenizer.getSettings().standards;
+    const Standards::Language language = tokenizer.isCPP() ? Standards::CPP : Standards::C;
+    simplecpp::OutputList outputList;
+    simplecpp::DUI dui;
+    dui.std = standards.getStdForLanguage(language);
+    simplecpp::TokenList tokens1({code, size}, files, file0, dui, &outputList);
 
     Preprocessor preprocessor(tokens1, tokenizer.getSettings(), errorlogger, Path::identify(tokens1.getFiles()[0], false));
-    simplecpp::TokenList tokens2 = preprocessor.preprocess("", files, true);
+    (void)preprocessor.loadAllIncludes(files); // TODO: check result
+    simplecpp::TokenList tokens2 = preprocessor.preprocess("", files, outputList);
+    (void)preprocessor.reportOutput(outputList, true);
 
     // Tokenizer..
     tokenizer.list.createTokens(std::move(tokens2));
 
-    std::list<Directive> directives = preprocessor.createDirectives();
+    std::list<Directive> directives;
+    preprocessor.createDirectives(directives);
     tokenizer.setDirectives(std::move(directives));
 }
 

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -204,16 +204,15 @@ static const std::unordered_set<std::string> stdTypes = { "bool"
                                                           , "int"
                                                           , "long"
                                                           , "short"
-                                                          , "size_t"
                                                           , "void"
                                                           , "wchar_t"
                                                           , "signed"
                                                           , "unsigned"
 };
 
-bool Token::isStandardType(const std::string& str)
+bool Token::isStandardType(const std::string& s)
 {
-    return stdTypes.find(str) != stdTypes.end();
+    return stdTypes.find(s) != stdTypes.end();
 }
 
 void Token::update_property_isStandardType()
@@ -403,6 +402,9 @@ void Token::replace(Token *replaceThis, Token *start, Token *end)
     delete replaceThis;
 }
 
+/**
+ * @throws InternalError thrown on unexpected command or missing varid with %varid%
+ */
 static
 #if defined(__GNUC__)
 // GCC does not inline this by itself
@@ -421,7 +423,7 @@ int multiComparePercent(const Token *tok, const char*& haystack, nonneg int vari
                 return 1;
         } else { // %varid%
             if (varid == 0) {
-                throw InternalError(tok, "Internal error. Token::Match called with varid 0. Please report this to Cppcheck developers");
+                throw InternalError(tok, "Internal error. Token::Match called with varid 0.");
             }
 
             haystack += 6;
@@ -551,7 +553,7 @@ int multiCompareImpl(const Token *tok, const char *haystack, nonneg int varid)
     const char *needle = tok->str().c_str();
     const char *needlePointer = needle;
     for (;;) {
-        if (needlePointer == needle && haystack[0] == '%' && haystack[1] != '|' && haystack[1] != '\0' && haystack[1] != ' ') {
+        if (needlePointer == needle && haystack[0] == '%' && haystack[1] != '|' && haystack[1] != '\0' && haystack[1] != ' ' && haystack[1] != '=') {
             const int ret = multiComparePercent(tok, haystack, varid);
             if (ret < 2)
                 return ret;
@@ -611,7 +613,6 @@ bool Token::simpleMatch(const Token *tok, const char pattern[], size_t pattern_l
         return false; // shortcut
     const char *current = pattern;
     const char *end = pattern + pattern_len;
-    // cppcheck-suppress shadowFunction - TODO: fix this
     const char *next = static_cast<const char*>(std::memchr(pattern, ' ', pattern_len));
     if (!next)
         next = end;
@@ -634,31 +635,31 @@ bool Token::simpleMatch(const Token *tok, const char pattern[], size_t pattern_l
     return true;
 }
 
-bool Token::firstWordEquals(const char *str, const char *word)
+bool Token::firstWordEquals(const char *s, const char *word)
 {
     for (;;) {
-        if (*str != *word)
-            return (*str == ' ' && *word == 0);
-        if (*str == 0)
+        if (*s != *word)
+            return (*s == ' ' && *word == 0);
+        if (*s == 0)
             break;
 
-        ++str;
+        ++s;
         ++word;
     }
 
     return true;
 }
 
-const char *Token::chrInFirstWord(const char *str, char c)
+const char *Token::chrInFirstWord(const char *s, char c)
 {
     for (;;) {
-        if (*str == ' ' || *str == 0)
+        if (*s == ' ' || *s == 0)
             return nullptr;
 
-        if (*str == c)
-            return str;
+        if (*s == c)
+            return s;
 
-        ++str;
+        ++s;
     }
 }
 
@@ -766,7 +767,6 @@ nonneg int Token::getStrArraySize(const Token *tok)
 {
     assert(tok != nullptr);
     assert(tok->tokType() == eString);
-    // cppcheck-suppress shadowFunction - TODO: fix this
     const std::string str(getStringLiteral(tok->str()));
     int sizeofstring = 1;
     for (int i = 0; i < static_cast<int>(str.size()); i++) {
@@ -784,7 +784,7 @@ nonneg int Token::getStrSize(const Token *tok, const Settings &settings)
     if (tok->valueType()) {
         ValueType vt(*tok->valueType());
         vt.pointer = 0;
-        sizeofType = ValueFlow::getSizeOf(vt, settings, ValueFlow::Accuracy::ExactOrZero);
+        sizeofType = vt.getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
     }
     return getStrArraySize(tok) * sizeofType;
 }
@@ -1011,41 +1011,41 @@ Token *Token::findsimplematch(Token * const startTok, const char pattern[], size
 }
 
 template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-static T *findmatchImpl(T * const startTok, const char pattern[], const nonneg int varId)
+static T *findmatchImpl(T * const startTok, const char pattern[], const nonneg int varid)
 {
     for (T* tok = startTok; tok; tok = tok->next()) {
-        if (Token::Match(tok, pattern, varId))
+        if (Token::Match(tok, pattern, varid))
             return tok;
     }
     return nullptr;
 }
 
-const Token *Token::findmatch(const Token * const startTok, const char pattern[], const nonneg int varId)
+const Token *Token::findmatch(const Token * const startTok, const char pattern[], const nonneg int varid)
 {
-    return findmatchImpl(startTok, pattern, varId);
+    return findmatchImpl(startTok, pattern, varid);
 }
 
-Token *Token::findmatch(Token * const startTok, const char pattern[], const nonneg int varId) {
-    return findmatchImpl(startTok, pattern, varId);
+Token *Token::findmatch(Token * const startTok, const char pattern[], const nonneg int varid) {
+    return findmatchImpl(startTok, pattern, varid);
 }
 
 template<class T, REQUIRES("T must be a Token class", std::is_convertible<T*, const Token*> )>
-static T *findmatchImpl(T * const startTok, const char pattern[], const Token * const end, const nonneg int varId)
+static T *findmatchImpl(T * const startTok, const char pattern[], const Token * const end, const nonneg int varid)
 {
     for (T* tok = startTok; tok && tok != end; tok = tok->next()) {
-        if (Token::Match(tok, pattern, varId))
+        if (Token::Match(tok, pattern, varid))
             return tok;
     }
     return nullptr;
 }
 
-const Token *Token::findmatch(const Token * const startTok, const char pattern[], const Token * const end, const nonneg int varId)
+const Token *Token::findmatch(const Token * const startTok, const char pattern[], const Token * const end, const nonneg int varid)
 {
-    return findmatchImpl(startTok, pattern, end, varId);
+    return findmatchImpl(startTok, pattern, end, varid);
 }
 
-Token *Token::findmatch(Token * const startTok, const char pattern[], const Token * const end, const nonneg int varId) {
-    return findmatchImpl(startTok, pattern, end, varId);
+Token *Token::findmatch(Token * const startTok, const char pattern[], const Token * const end, const nonneg int varid) {
+    return findmatchImpl(startTok, pattern, end, varid);
 }
 
 void Token::function(const Function *f)
@@ -1330,10 +1330,10 @@ std::string Token::stringifyList(const stringifyOptions& options, const std::vec
 
     std::string ret;
 
-    unsigned int lineNumber = mImpl->mLineNumber - (options.linenumbers ? 1U : 0U);
+    nonneg int lineNumber = mImpl->mLineNumber - (options.linenumbers ? 1 : 0);
     // cppcheck-suppress shadowFunction - TODO: fix this
-    unsigned int fileIndex = options.files ? ~0U : mImpl->mFileIndex;
-    std::map<int, unsigned int> lineNumbers;
+    nonneg int fileIndex = options.files ? ~0U : mImpl->mFileIndex;
+    std::map<nonneg int, nonneg int> lineNumbers;
     for (const Token *tok = this; tok != end; tok = tok->next()) {
         assert(tok && "end precedes token");
         if (!tok)
@@ -1416,11 +1416,6 @@ std::string Token::stringifyList(bool varid, bool attributes, bool linenumbers, 
 std::string Token::stringifyList(const Token* end, bool attributes) const
 {
     return stringifyList(false, attributes, false, false, false, nullptr, end);
-}
-
-std::string Token::stringifyList(bool varid) const
-{
-    return stringifyList(varid, false, true, true, true, nullptr, nullptr);
 }
 
 void Token::astParent(Token* tok)
@@ -1818,7 +1813,7 @@ void Token::printValueFlow(const std::vector<std::string>& files, bool xml, std:
                 outs += "      <value ";
                 switch (value.valueType) {
                 case ValueFlow::Value::ValueType::INT:
-                    if (tok->valueType() && tok->valueType()->sign == ValueType::UNSIGNED) {
+                    if (tok->valueType() && tok->valueType()->sign == ValueType::UNSIGNED && value.toString() != "!<=-1") {
                         outs += "intvalue=\"";
                         outs += MathLib::toString(static_cast<MathLib::biguint>(value.intvalue));
                         outs += '\"';
@@ -2358,12 +2353,12 @@ const ::Type* Token::typeOf(const Token* tok, const Token** typeTok)
         return tok->variable()->type();
     if (tok->function())
         return tok->function()->retType;
+    if (tok->valueType() && tok->valueType()->typeScope && tok->valueType()->typeScope->definedType)
+        return tok->valueType()->typeScope->definedType;
     if (Token::simpleMatch(tok, "return")) {
-        // cppcheck-suppress shadowFunction - TODO: fix this
         const Scope *scope = tok->scope();
         if (!scope)
             return nullptr;
-        // cppcheck-suppress shadowFunction - TODO: fix this
         const Function *function = scope->function;
         if (!function)
             return nullptr;
@@ -2438,6 +2433,7 @@ std::pair<const Token*, const Token*> Token::typeDecl(const Token* tok, bool poi
                     varTok = varTok->next();
                 while (Token::Match(varTok, "%name% ::"))
                     varTok = varTok->tokAt(2);
+                assert(varTok != tok);
                 std::pair<const Token*, const Token*> r = typeDecl(varTok);
                 if (r.first)
                     return r;
@@ -2473,18 +2469,15 @@ std::pair<const Token*, const Token*> Token::typeDecl(const Token* tok, bool poi
         return {var->typeStartToken(), var->typeEndToken()->next()};
     }
     if (Token::simpleMatch(tok, "return")) {
-        // cppcheck-suppress shadowFunction - TODO: fix this
         const Scope* scope = tok->scope();
         if (!scope)
             return {};
-        // cppcheck-suppress shadowFunction - TODO: fix this
         const Function* function = scope->function;
         if (!function)
             return {};
         return { function->retDef, function->returnDefEnd() };
     }
     if (tok->previous() && tok->previous()->function()) {
-        // cppcheck-suppress shadowFunction - TODO: fix this
         const Function *function = tok->previous()->function();
         return {function->retDef, function->returnDefEnd()};
     }
@@ -2661,26 +2654,26 @@ Token::Impl::~Impl()
     }
 }
 
-void Token::Impl::setCppcheckAttribute(CppcheckAttributesType type, MathLib::bigint value)
+void Token::Impl::setCppcheckAttribute(CppcheckAttributesType attrType, MathLib::bigint value)
 {
     CppcheckAttributes *attr = mCppcheckAttributes;
-    while (attr && attr->type != type)
+    while (attr && attr->type != attrType)
         attr = attr->next;
     if (attr)
         attr->value = value;
     else {
         attr = new CppcheckAttributes;
-        attr->type = type;
+        attr->type = attrType;
         attr->value = value;
         attr->next = mCppcheckAttributes;
         mCppcheckAttributes = attr;
     }
 }
 
-bool Token::Impl::getCppcheckAttribute(CppcheckAttributesType type, MathLib::bigint &value) const
+bool Token::Impl::getCppcheckAttribute(CppcheckAttributesType attrType, MathLib::bigint &value) const
 {
     const CppcheckAttributes *attr = mCppcheckAttributes;
-    while (attr && attr->type != type)
+    while (attr && attr->type != attrType)
         attr = attr->next;
     if (attr)
         value = attr->value;
@@ -2749,4 +2742,11 @@ const SmallVector<ReferenceToken>& Token::refs(bool temporary) const
     if (!mImpl->mRefs)
         mImpl->mRefs.reset(new SmallVector<ReferenceToken>(followAllReferences(this, false)));
     return *mImpl->mRefs;
+}
+
+bool Token::isMutableExpr() const
+{
+    if (mImpl->mMutableExpr == -1)
+        mImpl->mMutableExpr = isMutableExpression(this);
+    return !!mImpl->mMutableExpr;
 }

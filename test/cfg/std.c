@@ -7,7 +7,7 @@
 // No warnings about bad library configuration, unmatched suppressions, etc. exitcode=0
 //
 
-// cppcheck-suppress-file valueFlowBailout
+// cppcheck-suppress-file [valueFlowBailout,purgedConfiguration]
 
 #include <string.h>
 #include <stdio.h>
@@ -37,6 +37,17 @@
 #include <complex.h>
 #include <math.h>
 #include <stddef.h>
+
+void test_int32_min() {
+    // cppcheck-suppress shiftNegativeLHS
+    // cppcheck-suppress shiftTooManyBits ; tests that INT32_MIN is a 32-bit expression (not 64-bit expression)
+    (void)(INT32_MIN >> 40);
+}
+
+void test_int64_min() {
+    // TODO cppcheck-suppress knownConditionTrueFalse // #13814
+    if (INT64_MIN < 0) {}
+}
 
 size_t invalidFunctionArgStr_wcslen(void)
 {
@@ -274,6 +285,13 @@ char* nullPointer_fgets(char *buffer, int n, FILE *stream)
     (void)fgets(buffer,n,NULL);
     // No warning is expected
     return fgets(buffer, n, stream);
+}
+
+void nullPointer_fseek(void) { // #10948
+    FILE *p = fopen("foo", "r");
+    // cppcheck-suppress nullPointerOutOfResources
+    fseek(p, 1, SEEK_SET);
+    fclose(p);
 }
 
 void memleak_aligned_alloc(void)
@@ -3499,6 +3517,13 @@ void invalidFunctionArg_strchr(const char *cs, int c)
 
     // cppcheck-suppress invalidFunctionArg
     (void)strchr(cs, 256);
+}
+
+void constParameterPointer_strchr(char *str) // #14453
+{
+	char *sep = strchr(str, ':');
+	if (sep)
+		*sep = '\0';
 }
 
 void invalidFunctionArg_log10(float f, double d, const long double ld)

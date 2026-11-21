@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
 
 #include "errortypes.h"
 #include "mathlib.h"
-#include "settings.h"
 #include "standards.h"
 #include "symboldatabase.h"
 #include "token.h"
@@ -44,6 +43,8 @@
 #include <utility>
 #include <vector>
 #include <numeric>
+
+class Settings;
 
 static const std::string AccessSpecDecl = "AccessSpecDecl";
 static const std::string ArraySubscriptExpr = "ArraySubscriptExpr";
@@ -139,7 +140,7 @@ static std::vector<std::string> splitString(const std::string &line)
             pos2 = line.find('\"', pos1+1);
         else if (line[pos1] == '\'') {
             pos2 = line.find('\'', pos1+1);
-            if (pos2 < static_cast<int>(line.size()) - 3 && line.compare(pos2, 3, "\':\'", 0, 3) == 0)
+            if (pos2 < line.size() - 3 && line.compare(pos2, 3, "\':\'", 0, 3) == 0)
                 pos2 = line.find('\'', pos2 + 3);
         } else {
             pos2 = pos1;
@@ -302,7 +303,7 @@ namespace clangimport {
         }
 
         // "}" tokens that are not end-of-scope
-        std::set<Token *> mNotScope;
+        std::set<const Token *> mNotScope;
 
         std::map<const Scope *, AccessControl> scopeAccessControl;
     private:
@@ -332,6 +333,9 @@ namespace clangimport {
         std::vector<AstNodePtr> children;
 
         bool isPrologueTypedefDecl() const;
+        /**
+         * @throws InternalError thrown if AST location is invalid
+         */
         void setLocations(TokenList &tokenList, int file, int line, int col);
 
         void dumpAst(int num = 0, int indent = 0) const;
@@ -350,7 +354,10 @@ namespace clangimport {
             mData->mNotScope.clear();
         }
 
-        AstNodePtr getChild(int c) {
+        /**
+         * @throws InternalError thrown if index is out of bounds
+         */
+        AstNodePtr getChild(size_t c) {
             if (c >= children.size()) {
                 std::ostringstream err;
                 err << "ClangImport: AstNodePtr::getChild(" << c << ") out of bounds. children.size=" << children.size() << " " << nodeType;
@@ -361,6 +368,9 @@ namespace clangimport {
             return children[c];
         }
     private:
+        /**
+         * @throws InternalError thrown if CXXForRangeStmt cannot be imported
+         */
         Token *createTokens(TokenList &tokenList);
         Token *addtoken(TokenList &tokenList, const std::string &str, bool valueType=true);
         const ::Type *addTypeTokens(TokenList &tokenList, const std::string &str, const Scope *scope = nullptr);
@@ -499,7 +509,7 @@ void clangimport::AstNode::dumpAst(int num, int indent) const
     for (const auto& tok: mExtTokens)
         std::cout << " " << tok;
     std::cout << std::endl;
-    for (int c = 0; c < children.size(); ++c) {
+    for (size_t c = 0; c < children.size(); ++c) {
         if (children[c])
             children[c]->dumpAst(c, indent + 2);
         else
@@ -1422,7 +1432,7 @@ void clangimport::AstNode::createTokensFunctionDecl(TokenList &tokenList)
         function->nestedIn = nestedIn;
     function->argDef = par1;
     // Function arguments
-    for (int i = 0; i < children.size(); ++i) {
+    for (size_t i = 0; i < children.size(); ++i) {
         AstNodePtr child = children[i];
         if (child->nodeType != ParmVarDecl)
             continue;
@@ -1586,7 +1596,7 @@ static void setValues(const Tokenizer &tokenizer, const SymbolDatabase *symbolDa
                 return v * dim.num;
             });
             if (var.valueType())
-                typeSize += mul * var.valueType()->typeSize(settings.platform, true);
+                typeSize += mul * var.valueType()->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
         }
         scope.definedType->sizeOf = typeSize;
     }
@@ -1594,8 +1604,8 @@ static void setValues(const Tokenizer &tokenizer, const SymbolDatabase *symbolDa
     for (auto *tok = const_cast<Token*>(tokenizer.tokens()); tok; tok = tok->next()) {
         if (Token::simpleMatch(tok, "sizeof (")) {
             ValueType vt = ValueType::parseDecl(tok->tokAt(2), settings);
-            const MathLib::bigint sz = vt.typeSize(settings.platform, true);
-            if (sz <= 0)
+            const size_t sz = vt.getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
+            if (sz == 0)
                 continue;
             long long mul = 1;
             for (const Token *arrtok = tok->linkAt(1)->previous(); arrtok; arrtok = arrtok->previous()) {
@@ -1647,7 +1657,7 @@ void clangimport::parseClangAstDump(Tokenizer &tokenizer, std::istream &f)
             continue;
         }
 
-        const int level = (pos1 - 1) / 2;
+        const size_t level = (pos1 - 1) / 2;
         if (level == 0 || level > tree.size())
             continue;
 

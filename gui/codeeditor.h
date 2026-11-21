@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -65,7 +65,7 @@ private:
         RuleRole ruleRole;
     };
 
-    void applyFormat(HighlightingRule &rule);
+    void applyFormat(HighlightingRule &rule) const;
 
     QList<HighlightingRule> mHighlightingRules;
     QList<HighlightingRule> mHighlightingRulesWithSymbols;
@@ -119,6 +119,7 @@ public:
         return mFileName;
     }
 
+    // NOLINTNEXTLINE(bugprone-derived-method-shadowing-base-method) - TODO: fix this
     void clear() {
         mFileName.clear();
         setPlainText(QString());
@@ -128,9 +129,9 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private slots:
-    void updateLineNumberAreaWidth(int newBlockCount);
+    void updateLineNumberAreaWidth(int /*newBlockCount*/);
     void highlightErrorLine();
-    void updateLineNumberArea(const QRect & /*rect*/, int /*dy*/);
+    void updateLineNumberArea(const QRect& rect, int dy);
 
 private:
     QString generateStyleString();

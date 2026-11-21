@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,7 +39,7 @@ private:
     }
 
     void copyOnWrite() const {
-        SimpleTokenList tokenlist("1+1;");
+        SimpleTokenList tokenlist("1+1;\n");
         Token* tok = tokenlist.front();
         const nonneg int id = 123;
         tok->exprId(id);
@@ -98,8 +98,8 @@ private:
 
     void at() const {
         ProgramMemory pm;
-        ASSERT_THROW_EQUALS_2(pm.at(123), std::out_of_range, "ProgramMemory::at");
-        ASSERT_THROW_EQUALS_2(utils::as_const(pm).at(123), std::out_of_range, "ProgramMemory::at");
+        ASSERT_THROW_EQUALS(pm.at(123), std::out_of_range, "ProgramMemory::at");
+        ASSERT_THROW_EQUALS(utils::as_const(pm).at(123), std::out_of_range, "ProgramMemory::at");
     }
 };
 

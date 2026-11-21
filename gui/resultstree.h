@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,13 +36,11 @@
 class ApplicationList;
 class Report;
 class ErrorItem;
-class ErrorLine;
 class QModelIndex;
 class QWidget;
 class QItemSelectionModel;
 class ThreadHandler;
 class QSettings;
-class QStandardItem;
 class QStandardItemModel;
 enum class Severity : std::uint8_t;
 
@@ -203,8 +201,6 @@ public:
      * @brief GUI severities.
      */
     ShowTypes mShowSeverities;
-
-    void keyPressEvent(QKeyEvent *event) override;
 
     void setReportType(ReportType reportType);
 
@@ -559,6 +555,8 @@ protected:
     bool mVisibleErrors{};
 
 private:
+    void keyPressEvent(QKeyEvent *event) override;
+
     /** tag selected items */
     void tagSelectedItems(const QString &tag);
 
@@ -567,6 +565,9 @@ private:
     bool isAutosarMisraReport() const;
 
     QStringList mHiddenMessageId;
+
+    // List of existing errors so we can avoid duplicates
+    QStringList mErrorList;
 
     QItemSelectionModel* mSelectionModel{};
     ThreadHandler *mThread{};

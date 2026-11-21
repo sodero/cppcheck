@@ -278,7 +278,7 @@ HTML_HEAD = """
 
         updateFileRows();
       }
-      
+
       function toggleClassification(cb) {
         cb.parentElement.classList.toggle("unchecked", !cb.checked);
         var elements = document.querySelectorAll(".class_" + cb.id);
@@ -289,7 +289,7 @@ HTML_HEAD = """
 
         updateFileRows();
       }
-    
+
       function toggleTool(cb) {
         cb.parentElement.classList.toggle("unchecked", !cb.checked);
 
@@ -356,6 +356,57 @@ HTML_HEAD = """
         }
       }
 
+      function reapplyFilters() {
+        // Reapply ID filters
+        var idToggles = document.querySelectorAll(".idToggle");
+        for (var i = 1; i < idToggles.length; i++) {
+          var cb = idToggles[i];
+          var elements = document.querySelectorAll("." + cb.id);
+          for (var j = 0; j < elements.length; j++) {
+            elements[j].classList.toggle("id-filtered", !cb.checked);
+          }
+        }
+
+        // Reapply severity filters
+        var sevToggles = document.querySelectorAll(".sev_toggle");
+        for (var i = 0; i < sevToggles.length; i++) {
+          var cb = sevToggles[i];
+            var elements = document.querySelectorAll(".sev_" + cb.id);
+          for (var j = 0; j < elements.length; j++) {
+            elements[j].classList.toggle("severity-filtered", !cb.checked);
+          }
+        }
+
+        // Reapply classification filters
+        var classToggles = document.querySelectorAll(".class_toggle");
+        for (var i = 0; i < classToggles.length; i++) {
+          var cb = classToggles[i];
+          var elements = document.querySelectorAll(".class_" + cb.id);
+          for (var j = 0; j < elements.length; j++) {
+            elements[j].classList.toggle("classification-filtered", !cb.checked);
+          }
+        }
+
+        // Reapply tool filters
+        var toolToggles = document.querySelectorAll(".tool_toggle");
+        for (var i = 0; i < toolToggles.length; i++) {
+          var cb = toolToggles[i];
+          var elements;
+          if (cb.id == "clang-tidy")
+            elements = document.querySelectorAll("[class^=clang-tidy-]");
+          else
+            elements = document.querySelectorAll(".issue:not([class^=clang-tidy-])");
+
+          for (var j = 0; j < elements.length; j++) {
+            elements[j].classList.toggle("tool-filtered", !cb.checked);
+          }
+        }
+
+        // Update file rows
+        updateFileRows();
+      }
+
+      window.addEventListener("pageshow", reapplyFilters);
       window.addEventListener("load", initExpandables);
     </script>
   </head>
@@ -412,15 +463,15 @@ def filter_button(enabled_filters, id, function):
     enabled = enabled_filters.get(id, False)
     if not id:
         id = 'None'
-    return '\n        <label class="checkBtn%s"><input type="checkbox" onclick="%s(this)" id="%s"%s/>%s</label>'\
+    return '\n        <label class="checkBtn%s"><input type="checkbox" onclick="%s(this)" id="%s" %s>%s</label>'\
           % (' disabled' if not enabled else '', function, id, 'checked' if enabled else 'disabled', id)
 
 def filter_bar(enabled):
     severity_bar = ''.join([filter_button(enabled, severity, 'toggleSeverity') for severity in ['error', 'warning', 'portability', 'performance', 'style', 'information']]) + '\n        | '
     classification_bar = ''.join([filter_button(enabled, _class, 'toggleClassification') for _class in ['Mandatory', 'Required', 'Advisory', 'Document', 'Disapplied', 'L1','L2','L3','']]) + '\n        | '
-    if "checked/>" not in severity_bar:
+    if "checked>" not in severity_bar:
         severity_bar = ''
-    if "checked/>" not in classification_bar:
+    if "checked>" not in classification_bar:
         classification_bar = ''
     return ''.join([
      '      <div id="filters">\n'
@@ -428,8 +479,8 @@ def filter_bar(enabled):
     , classification_bar
     ,''.join([filter_button(enabled, tool, 'toggleTool') for tool in ['cppcheck', 'clang-tidy']])
     ,'\n        | '
-    ,'\n        <label class="severityHeader">File: <input type="search" oninput="filterFile(this.value)"/></label>'
-    ,'\n        <label class="severityHeader">Filter: <input type="search" oninput="filterText(this.value)"/></label>'
+    ,'\n        <label class="severityHeader">File: <input type="search" oninput="filterFile(this.value)"></label>'
+    ,'\n        <label class="severityHeader">Filter: <input type="search" oninput="filterText(this.value)"></label>'
     ,'\n      </div>\n'])
 def git_blame(errors, path, file, blame_options):
     last_line= errors[-1]['line']
@@ -494,9 +545,20 @@ def tr_str(td_th, line, id, cwe, severity, classification, guideline, message, t
     if classification:
         items.extend([classification, guideline])
     if htmlfile:
-        ret += '<%s><a href="%s#line-%d">%d</a></%s>' % (td_th, htmlfile, line, line, td_th)
+        if htmlfile.startswith("http://") or htmlfile.startswith("https://"):
+            # GitHub/GitLab style line anchor
+            href = f"{htmlfile.rstrip('#L1')}#L{line}"
+            # Emit **line number with link**
+            ret += f'<{td_th}><a href="{href}" target="_blank" rel="noopener noreferrer">{line}</a></{td_th}>'
+        else:
+            # local HTML annotated
+            href = f"{htmlfile}#line-{line}"
+            # Emit **line number with link**
+            ret += f'<{td_th}><a href="{href}">{line}</a></{td_th}>'
+
+        # Emit id, cwe, severity, classification, ...
         for item in items:
-            ret += '<%s>%s</%s>' % (td_th, item, td_th)
+            ret += f'<{td_th}>{item}</{td_th}>'
     else:
         items.insert(0,line)
         for item in items:
@@ -675,7 +737,9 @@ def main() -> None:
                               'written.')
     parser.add_argument('--source-dir', dest='source_dir',
                          help='Base directory where source code files can be '
-                              'found.')
+                              'found, or a URL to a remote GitHub/GitLab '
+                              'repository including a branch, e.g. '
+                              '--source-dir=https://github.com/<username>/<repo>/blob/<branch>/')
     parser.add_argument('--add-author-information', dest='add_author_information',
                         help='Blame information to include. '
                              'Adds specified author information. '
@@ -704,6 +768,10 @@ def main() -> None:
     source_dir = os.getcwd()
     if options.source_dir:
         source_dir = options.source_dir
+
+    is_remote = False
+    if source_dir.startswith("http://") or source_dir.startswith("https://"):
+        is_remote = True
 
     add_author_information = []
     if options.add_author_information:
@@ -753,9 +821,14 @@ def main() -> None:
     for error in contentHandler.errors:
         filename = error['file']
         if filename not in files:
-            files[filename] = {
-                'errors': [], 'htmlfile': str(file_no) + '.html'}
-            file_no = file_no + 1
+            if is_remote:
+                # Construct remote URL for GitHub/GitLab
+                # tr_str() will use the actual line number, so we can just start with line 1
+                remote_url = source_dir.rstrip('/') + '/' + filename + '#L1'
+                files[filename] = {'errors': [], 'htmlfile': remote_url}
+            else:
+                files[filename] = {'errors': [], 'htmlfile': str(file_no) + '.html'}
+                file_no += 1
         files[filename]['errors'].append(error)
 
     # Make sure that the report directory is created if it doesn't exist.
@@ -793,6 +866,11 @@ def main() -> None:
             lines.append(error['line'])
 
         if filename == '':
+            continue
+
+        if is_remote:
+            # Remote source: do NOT generate local annotated HTML files.
+            # The index will still point directly to GitHub/GitLab URLs.
             continue
 
         source_filename = os.path.join(source_dir, filename)
@@ -837,8 +915,8 @@ def main() -> None:
                     lexer = guess_lexer(content, stripnl=False)
                 except ClassNotFound:
                     sys.stderr.write("ERROR: Couldn't determine lexer for the file' " + source_filename + " '. Won't be able to syntax highlight this file.")
-                    output_file.write("\n <tr><td colspan=\"5\"> Could not generate content because pygments failed to determine the code type.</td></tr>")
-                    output_file.write("\n <tr><td colspan=\"5\"> Sorry about this.</td></tr>")
+                    output_file.write("\n <tr><td colspan=\"6\"> Could not generate content because pygments failed to determine the code type.</td></tr>")
+                    output_file.write("\n <tr><td colspan=\"6\"> Sorry about this.</td></tr>")
                     continue
 
             if options.source_encoding:
@@ -932,10 +1010,10 @@ def main() -> None:
             htmlfile = data.get('htmlfile') if is_file else None
 
             output_file.write("\n      <tbody class=\"fileEntry\">")
-            output_file.write("\n       <tr><td colspan=\"5\">%s</td></tr>" % row_content)
+            output_file.write("\n       <tr><td colspan=\"6\">%s</td></tr>" % row_content)
 
             if filename in decode_errors:
-                output_file.write("\n       <tr><td colspan=\"5\">Could not generated due to UnicodeDecodeError</td></tr>")
+                output_file.write("\n       <tr><td colspan=\"6\">Could not generated due to UnicodeDecodeError</td></tr>")
 
             sorted_errors = sorted(data['errors'], key=lambda k: k['line'])
             blame_data = git_blame(sorted_errors, source_dir, filename, blame_options) if add_author_information else []

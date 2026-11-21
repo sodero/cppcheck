@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -35,11 +35,11 @@ class ErrorItem;
 class Settings;
 class ApplicationList;
 class ThreadHandler;
-class QModelIndex;
 class QPrinter;
 class QSettings;
 class CheckStatistics;
 class QPoint;
+class ResultItem;
 enum class ReportType : std::uint8_t;
 namespace Ui {
     class ResultsView;
@@ -307,7 +307,7 @@ public slots:
      * @param value Current progress value
      * @param description Description to accompany the progress
      */
-    void progress(int value, const QString& description);
+    void filesCheckedProgress(int value, const QString& description);
 
     /**
      * @brief Slot for new error to be displayed
@@ -387,11 +387,6 @@ private:
     CheckStatistics *mStatistics;
 
     Settings* mCheckSettings = nullptr;
-
-    /**
-     * Set to true when checking finish successfully. Set to false whenever analysis starts.
-     */
-    bool mSuccess = false;
 
     /** Critical error ids */
     QString mCriticalErrors;

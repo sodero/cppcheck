@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,14 +34,23 @@
 class FileWithDetails
 {
 public:
+    /**
+     * @throws std::runtime_error thrown if given path is empty
+     */
     FileWithDetails(std::string path, Standards::Language lang, std::size_t size)
-        : mPath(std::move(path))
-        , mPathSimplified(Path::simplifyPath(mPath))
-        , mLang(lang)
+        : mLang(lang)
         , mSize(size)
     {
+        setPath(std::move(path));
         if (mPath.empty())
             throw std::runtime_error("empty path specified");
+    }
+
+    void setPath(std::string p)
+    {
+        mPath = std::move(p);
+        mPathSimplified = Path::simplifyPath(mPath);
+        mPathAbsolute.clear();
     }
 
     const std::string& path() const
@@ -54,25 +63,45 @@ public:
         return mPathSimplified;
     }
 
+    const std::string& abspath() const
+    {
+        // use delayed resolution as it will fail for files which do not exist
+        if (mPathAbsolute.empty())
+            mPathAbsolute = Path::getAbsoluteFilePath(mPath);
+        return mPathAbsolute;
+    }
+
     std::size_t size() const
     {
         return mSize;
     }
 
-    void setLang(Standards::Language lang)
+    void setLang(Standards::Language language)
     {
-        mLang = lang;
+        mLang = language;
     }
 
     Standards::Language lang() const
     {
         return mLang;
     }
+
+    std::size_t fsFileId() const
+    {
+        return mFsFileId;
+    }
+
+    void setFsFileId(std::size_t id)
+    {
+        mFsFileId = id;
+    }
 private:
     std::string mPath;
     std::string mPathSimplified;
+    mutable std::string mPathAbsolute;
     Standards::Language mLang = Standards::Language::None;
     std::size_t mSize;
+    std::size_t mFsFileId{0};
 };
 
 /** File settings. Multiple configurations for a file is allowed. */
@@ -81,14 +110,12 @@ struct CPPCHECKLIB FileSettings {
         : file(std::move(path), lang, size)
     {}
 
-    int fileIndex = 0;
     std::string cfg;
     FileWithDetails file;
     const std::string& filename() const
     {
         return file.path();
     }
-    // cppcheck-suppress unusedFunction
     const std::string& sfilename() const
     {
         return file.spath();
@@ -121,6 +148,7 @@ struct CPPCHECKLIB FileSettings {
     }
     std::set<std::string> undefs;
     std::list<std::string> includePaths;
+    std::list<std::string> forcedIncludes;
     // only used by clang mode
     std::list<std::string> systemIncludePaths;
     std::string standard;

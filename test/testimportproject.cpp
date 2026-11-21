@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,16 +28,21 @@
 #include <list>
 #include <map>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-class TestImporter : public ImportProject {
+class TestImporter final : public ImportProject {
 public:
     using ImportProject::importCompileCommands;
     using ImportProject::importCppcheckGuiProject;
     using ImportProject::importVcxproj;
     using ImportProject::SharedItemsProject;
+    using ImportProject::collectArgs;
+    using ImportProject::fsSetDefines;
+    using ImportProject::fsSetIncludePaths;
+    using ImportProject::setRelativePaths;
 };
 
 
@@ -52,6 +57,7 @@ private:
         TEST_CASE(setIncludePaths1);
         TEST_CASE(setIncludePaths2);
         TEST_CASE(setIncludePaths3); // macro names are case insensitive
+        TEST_CASE(setRelativePathsInclude); // #14746
         TEST_CASE(importCompileCommands1);
         TEST_CASE(importCompileCommands2); // #8563, #9567
         TEST_CASE(importCompileCommands3); // check with existing trailing / in directory
@@ -66,29 +72,40 @@ private:
         TEST_CASE(importCompileCommands12); // #13040: "directory" is parent directory, relative include paths
         TEST_CASE(importCompileCommands13); // #13333: duplicate file entries
         TEST_CASE(importCompileCommands14); // #14156
+        TEST_CASE(importCompileCommands15); // #14306
+        TEST_CASE(importCompileCommandsForcedInclude); // -include / /FI force-include
         TEST_CASE(importCompileCommandsArgumentsSection); // Handle arguments section
         TEST_CASE(importCompileCommandsNoCommandSection); // gracefully handles malformed json
         TEST_CASE(importCompileCommandsDirectoryMissing); // 'directory' field missing
         TEST_CASE(importCompileCommandsDirectoryInvalid); // 'directory' field not a string
         TEST_CASE(importCppcheckGuiProject);
+        TEST_CASE(importCppcheckGuiProjectDuplicateSuppressions);
         TEST_CASE(importCppcheckGuiProjectPremiumMisra);
         TEST_CASE(ignorePaths);
         TEST_CASE(testVcxprojUnicode);
+        TEST_CASE(testCollectArgs1);
+        TEST_CASE(testCollectArgs2);
+        TEST_CASE(testCollectArgs3);
+        TEST_CASE(testCollectArgs4);
+        TEST_CASE(testCollectArgs5);
+        TEST_CASE(testCollectArgs6);
+        TEST_CASE(testCollectArgs7);
+        TEST_CASE(testVcxprojConditions);
     }
 
     void setDefines() const {
         FileSettings fs{"test.cpp", Standards::Language::CPP, 0};
 
-        ImportProject::fsSetDefines(fs, "A");
+        TestImporter::fsSetDefines(fs, "A");
         ASSERT_EQUALS("A=1", fs.defines);
 
-        ImportProject::fsSetDefines(fs, "A;B;");
+        TestImporter::fsSetDefines(fs, "A;B;");
         ASSERT_EQUALS("A=1;B=1", fs.defines);
 
-        ImportProject::fsSetDefines(fs, "A;;B;");
+        TestImporter::fsSetDefines(fs, "A;;B;");
         ASSERT_EQUALS("A=1;B=1", fs.defines);
 
-        ImportProject::fsSetDefines(fs, "A;;B");
+        TestImporter::fsSetDefines(fs, "A;;B");
         ASSERT_EQUALS("A=1;B=1", fs.defines);
     }
 
@@ -96,7 +113,7 @@ private:
         FileSettings fs{"test.cpp", Standards::Language::CPP, 0};
         std::list<std::string> in(1, "../include");
         std::map<std::string, std::string, cppcheck::stricmp> variables;
-        ImportProject::fsSetIncludePaths(fs, "abc/def/", in, variables);
+        TestImporter::fsSetIncludePaths(fs, "abc/def/", in, variables);
         ASSERT_EQUALS(1U, fs.includePaths.size());
         ASSERT_EQUALS("abc/include/", fs.includePaths.front());
     }
@@ -106,7 +123,7 @@ private:
         std::list<std::string> in(1, "$(SolutionDir)other");
         std::map<std::string, std::string, cppcheck::stricmp> variables;
         variables["SolutionDir"] = "c:/abc/";
-        ImportProject::fsSetIncludePaths(fs, "/home/fred", in, variables);
+        TestImporter::fsSetIncludePaths(fs, "/home/fred", in, variables);
         ASSERT_EQUALS(1U, fs.includePaths.size());
         ASSERT_EQUALS("c:/abc/other/", fs.includePaths.front());
     }
@@ -116,9 +133,21 @@ private:
         std::list<std::string> in(1, "$(SOLUTIONDIR)other");
         std::map<std::string, std::string, cppcheck::stricmp> variables;
         variables["SolutionDir"] = "c:/abc/";
-        ImportProject::fsSetIncludePaths(fs, "/home/fred", in, variables);
+        TestImporter::fsSetIncludePaths(fs, "/home/fred", in, variables);
         ASSERT_EQUALS(1U, fs.includePaths.size());
         ASSERT_EQUALS("c:/abc/other/", fs.includePaths.front());
+    }
+
+    void setRelativePathsInclude() const {
+        const std::string cwd = Path::fromNativeSeparators(Path::getCurrentPath());
+        TestImporter importer;
+        FileSettings fs{cwd + "/sub/a.c", Standards::Language::C, 0};
+        fs.includePaths.push_back(cwd + "/");
+        importer.fileSettings.push_back(fs);
+        importer.setRelativePaths("compile_commands.json");
+        fs = importer.fileSettings.front();
+        ASSERT_EQUALS(".", fs.includePaths.front());
+        ASSERT_EQUALS("sub/a.c", fs.filename());
     }
 
     void importCompileCommands1() const {
@@ -362,8 +391,8 @@ private:
         ASSERT_EQUALS(2, importer.fileSettings.size());
         const FileSettings &fs1 = importer.fileSettings.front();
         const FileSettings &fs2 = importer.fileSettings.back();
-        ASSERT_EQUALS(0, fs1.fileIndex);
-        ASSERT_EQUALS(1, fs2.fileIndex);
+        ASSERT_EQUALS(0, fs1.file.fsFileId());
+        ASSERT_EQUALS(1, fs2.file.fsFileId());
     }
 
     void importCompileCommands14() const { // #14156
@@ -387,6 +416,44 @@ private:
         ASSERT_EQUALS(1, importer.fileSettings.size());
         const FileSettings &fs = importer.fileSettings.front();
         ASSERT_EQUALS("TFS_LINUX_MODULE_NAME=\"tfs_linux\"", fs.defines);
+    }
+
+    void importCompileCommands15() const { // #14306
+        REDIRECT;
+        constexpr char json[] =
+            R"([
+                 {
+                   "directory": "C:\\Users\\abcd\\efg\\hijk",
+                   "command": "gcc \"-Ipath\\123\" \"-c\" test.c",
+                   "file": "test.c",
+                   "output": "test.obj"
+                 }
+               ])";
+        std::istringstream istr(json);
+        TestImporter importer;
+        ASSERT_EQUALS(true, importer.importCompileCommands(istr));
+        ASSERT_EQUALS(1, importer.fileSettings.size());
+        const FileSettings &fs = importer.fileSettings.front();
+        ASSERT_EQUALS(1, fs.includePaths.size());
+        ASSERT_EQUALS("C:/Users/abcd/efg/hijk/path/123/", fs.includePaths.front());
+    }
+
+    void importCompileCommandsForcedInclude() const { // -include / /FI force-include
+        REDIRECT;
+        constexpr char json[] =
+            R"([{
+               "file": "/x/a.c",
+               "directory": "/x",
+               "command": "cc -include prefix.h /FIplatform.h -c a.c"
+            }])";
+        std::istringstream istr(json);
+        TestImporter importer;
+        ASSERT_EQUALS(true, importer.importCompileCommands(istr));
+        ASSERT_EQUALS(1, importer.fileSettings.size());
+        const FileSettings &fs = importer.fileSettings.front();
+        ASSERT_EQUALS(2, fs.forcedIncludes.size());
+        ASSERT_EQUALS("prefix.h", fs.forcedIncludes.front()); // gcc/clang -include
+        ASSERT_EQUALS("platform.h", fs.forcedIncludes.back()); // MSVC/clang-cl /FI
     }
 
     void importCompileCommandsArgumentsSection() const {
@@ -449,6 +516,7 @@ private:
                                "    <paths>\n"
                                "        <dir name=\"cli/\"/>\n"
                                "    </paths>\n"
+                               "    <user-include>gcc-macros.h</user-include>\n"
                                "    <exclude>\n"
                                "        <path name=\"gui/temp/\"/>\n"
                                "    </exclude>\n"
@@ -464,7 +532,29 @@ private:
         ASSERT_EQUALS("cli/", project.guiProject.pathNames[0]);
         ASSERT_EQUALS(1, s.includePaths.size());
         ASSERT_EQUALS("lib/", s.includePaths.front());
+        ASSERT_EQUALS(1, s.userIncludes.size());
+        ASSERT_EQUALS("gcc-macros.h", s.userIncludes.front());
         ASSERT_EQUALS(true, s.inlineSuppressions);
+    }
+
+    void importCppcheckGuiProjectDuplicateSuppressions() const {
+        REDIRECT;
+        constexpr char xml[] = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                               "<project version=\"1\">\n"
+                               "    <root name=\".\"/>\n"
+                               "    <project-name>test test</project-name>\n"
+                               "    <suppressions>\n"
+                               "        <suppression>uninitvar</suppression>\n"
+                               "        <suppression>uninitvar</suppression>\n"
+                               "    </suppressions>\n"
+                               "</project>\n";
+        std::istringstream istr(xml);
+        Settings s;
+        Suppressions supprs;
+        TestImporter project;
+        ASSERT_EQUALS(false, project.importCppcheckGuiProject(istr, s, supprs));
+        ASSERT_EQUALS(1, project.errors.size());
+        ASSERT_EQUALS("suppression 'uninitvar' already exists", project.errors[0]);
     }
 
     void importCppcheckGuiProjectPremiumMisra() const {
@@ -558,28 +648,131 @@ private:
         ASSERT_EQUALS(project.fileSettings.back().useMfc, true);
     }
 
+    void testCollectArgs1() const
+    {
+        std::vector<std::string> args;
+        const std::string cmd = "  gcc -o main main.c  ";
+        const std::string error = TestImporter::collectArgs(cmd, args);
+
+        ASSERT_EQUALS("", error);
+        ASSERT_EQUALS(4, args.size());
+        ASSERT_EQUALS("gcc", args[0]);
+        ASSERT_EQUALS("-o", args[1]);
+        ASSERT_EQUALS("main", args[2]);
+        ASSERT_EQUALS("main.c", args[3]);
+    }
+
+    void testCollectArgs2() const
+    {
+        std::vector<std::string> args;
+        const std::string cmd = "gcc -o main \"directory with space\"/main.c";
+        const std::string error = TestImporter::collectArgs(cmd, args);
+
+        ASSERT_EQUALS("", error);
+        ASSERT_EQUALS(4, args.size());
+        ASSERT_EQUALS("gcc", args[0]);
+        ASSERT_EQUALS("-o", args[1]);
+        ASSERT_EQUALS("main", args[2]);
+        ASSERT_EQUALS("directory with space/main.c", args[3]);
+    }
+
+    void testCollectArgs3() const
+    {
+        std::vector<std::string> args;
+        const std::string cmd = "gcc -o main directory\\ with\\ space/main.c";
+        const std::string error = TestImporter::collectArgs(cmd, args);
+
+        ASSERT_EQUALS("", error);
+        ASSERT_EQUALS(4, args.size());
+        ASSERT_EQUALS("gcc", args[0]);
+        ASSERT_EQUALS("-o", args[1]);
+        ASSERT_EQUALS("main", args[2]);
+        ASSERT_EQUALS("directory with space/main.c", args[3]);
+    }
+
+    void testCollectArgs4() const
+    {
+        std::vector<std::string> args;
+        const std::string cmd = "gcc -o main \'directory with space\'/main.c";
+        const std::string error = TestImporter::collectArgs(cmd, args);
+
+        ASSERT_EQUALS("", error);
+        ASSERT_EQUALS(4, args.size());
+        ASSERT_EQUALS("gcc", args[0]);
+        ASSERT_EQUALS("-o", args[1]);
+        ASSERT_EQUALS("main", args[2]);
+        ASSERT_EQUALS("directory with space/main.c", args[3]);
+    }
+
+    void testCollectArgs5() const
+    {
+        std::vector<std::string> args;
+        const std::string cmd = "gcc -o main directory_with_quote\\\"/main.c";
+        const std::string error = TestImporter::collectArgs(cmd, args);
+
+        ASSERT_EQUALS("", error);
+        ASSERT_EQUALS(4, args.size());
+        ASSERT_EQUALS("gcc", args[0]);
+        ASSERT_EQUALS("-o", args[1]);
+        ASSERT_EQUALS("main", args[2]);
+        ASSERT_EQUALS("directory_with_quote\"/main.c", args[3]);
+    }
+
+    void testCollectArgs6() const
+    {
+        std::vector<std::string> args;
+        const std::string cmd = "gcc -o main windows\\\\path\\\\main.c";
+        const std::string error = TestImporter::collectArgs(cmd, args);
+
+        ASSERT_EQUALS("", error);
+        ASSERT_EQUALS(4, args.size());
+        ASSERT_EQUALS("gcc", args[0]);
+        ASSERT_EQUALS("-o", args[1]);
+        ASSERT_EQUALS("main", args[2]);
+        ASSERT_EQUALS("windows\\path\\main.c", args[3]);
+    }
+
+    void testCollectArgs7() const
+    {
+        std::vector<std::string> args;
+        const std::string cmd = "gcc -o main \"non-terminated-quote/main.c";
+        const std::string error = TestImporter::collectArgs(cmd, args);
+
+        ASSERT_EQUALS("Missing closing quote in command string", error);
+    }
+
+    void testVcxprojConditions() const
+    {
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition("'$(Configuration)'=='Debug'", "Debug", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition("'$(Platform)'=='Win32'", "Debug", "Win32"));
+        ASSERT(!cppcheck::testing::evaluateVcxprojCondition("'$(Configuration)'=='Release'", "Debug", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" '$(Configuration)' == 'Debug' ", "Debug", "Win32"));
+        ASSERT(!cppcheck::testing::evaluateVcxprojCondition(" '$(Configuration)' != 'Debug' ", "Debug", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition("'$(Configuration)|$(Platform)' == 'Debug|Win32' ", "Debug", "Win32"));
+        ASSERT(!cppcheck::testing::evaluateVcxprojCondition("!('$(Configuration)|$(Platform)' == 'Debug|Win32' )", "Debug", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" '$(Configuration)' == 'Debug' And '$(Platform)' == 'Win32'", "Debug", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" '$(Configuration)' == 'Debug' Or '$(Platform)' == 'Win32'", "Release", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" $(Configuration.StartsWith('Debug'))", "Debug-AddressSanitizer", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" $(Configuration.EndsWith('AddressSanitizer'))", "Debug-AddressSanitizer", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" $(Configuration.Contains('Address'))", "Debug-AddressSanitizer", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" $(Configuration.Contains ( 'Address'  ) )", "Debug-AddressSanitizer", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" $(Configuration.Contains('Address')) And '$(Platform)' == 'Win32'", "Debug-AddressSanitizer", "Win32"));
+        ASSERT(cppcheck::testing::evaluateVcxprojCondition(" ($(Configuration.Contains('Address')) ) And ( '$(Platform)' == 'Win32')", "Debug-AddressSanitizer", "Win32"));
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("And", "", ""), std::runtime_error, "Invalid condition: 'And'");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("Or", "", ""), std::runtime_error, "Invalid condition: 'Or'");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("!", "", ""), std::runtime_error, "Invalid condition: '!'");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("'' == '' And ", "", ""), std::runtime_error, "Missing operator");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("('' == ''", "", ""), std::runtime_error, "'(' without closing ')'!");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("'' == '')", "", ""), std::runtime_error, "unmatched ')' in condition '' == '')");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("''", "", ""), std::runtime_error, "Invalid condition: ''''");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("'' == '", "", ""), std::runtime_error, "Can not tokenize condition");
+        ASSERT_THROW_EQUALS(cppcheck::testing::evaluateVcxprojCondition("$(Configuration.Lower())", "", ""), std::runtime_error, "Missing operator");
+        // invalid expression in => no error. We are ok with that as long as we don't crash
+        ASSERT(!cppcheck::testing::evaluateVcxprojCondition("' ' && ' '", "", ""));
+    }
+
     // TODO: test fsParseCommand()
 
-    // TODO: test vcxproj conditions
-    /*
-        <?xml version="1.0" encoding="utf-8"?>
-        <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-        <ItemGroup Label="ProjectConfigurations">
-        <ProjectConfiguration Include="Debug|x64">
-        <Configuration>Debug</Configuration>
-        <Platform>x64</Platform>
-        </ProjectConfiguration>
-        </ItemGroup>
-        <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-        <ClCompile>
-        <PreprocessorDefinitions>CPPCHECKLIB_IMPORT</PreprocessorDefinitions>
-        </ClCompile>
-        </ItemDefinitionGroup>
-        <ItemGroup>
-        <ClCompile Include="main.c" />
-        </ItemGroup>
-        </Project>
-     */
 };
 
 REGISTER_TEST(TestImportProject)

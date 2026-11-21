@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 
 #include "config.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -37,7 +38,15 @@ public:
     using MatchFn = std::function<void (int start, int end)>;
     virtual std::string match(const std::string& str, const MatchFn& matchFn) const = 0;
 
-    static std::shared_ptr<Regex> create(std::string pattern, std::string& err);
+    enum class Engine : std::uint8_t
+    {
+        Unknown = 0,
+        Pcre = 1
+    };
+
+    virtual Engine engine() const = 0;
+
+    static std::shared_ptr<Regex> create(std::string pattern, Engine engine, std::string& err);
 };
 
 #endif // HAVE_RULES

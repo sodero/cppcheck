@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,9 +22,9 @@
 
 std::vector<checkers::IdMapping> checkers::idMappingAutosar{
     {"m0-1-1", "unreachableCode,duplicateBreak"},
-    {"m0-1-2", "unsignedLessThanZero"},
+    {"m0-1-2", "unsignedLessThanZero,compareValueOutOfTypeRangeError"},
     {"m0-1-3", "unusedVariable,unusedStructMember"},
-    {"a0-1-1", "unreadVariable,unusedValue,redundantAssignment"},
+    {"a0-1-1", "unreadVariable,redundantAssignment"},
     {"m0-1-9", "redundantAssignment,redundantInitialization"},
     {"m0-1-10", "unusedFunction"},
     {"m0-2-1", "overlappingWriteUnion,overlappingWriteFunction"},
@@ -41,7 +41,6 @@ std::vector<checkers::IdMapping> checkers::idMappingAutosar{
     {"m5-0-17", "comparePointers"},
     {"m5-0-18", "comparePointers"},
     {"a5-1-4", "returnDanglingLifetime"},
-    {"a5-2-2", "cstyleCast"},
     {"a5-2-5", "arrayIndexOutOfBounds,arrayIndexOutOfBoundsCond,pointerOutOfBounds,pointerOutOfBoundsCond,negativeIndex,arrayIndexThenCheck,bufferAccessOutOfBounds,objectIndex,argumentSize"},
     {"m5-3-4", "sizeofFunctionCall"},
     {"a5-3-2", "nullPointer,nullPointerRedundantCheck,nullPointerArithmetic,nullPointerArithmeticRedundantCheck,nullPointerDefaultArg"},
@@ -96,17 +95,19 @@ std::vector<checkers::IdMapping> checkers::idMappingCertC{
 };
 
 std::vector<checkers::IdMapping> checkers::idMappingCertCpp{
+    {"STR52", "invalidContainer"},
+    {"STR51", "nullPointer"},
     {"CTR51", "eraseDereference"},
     {"CTR54", "comparePointers"},
     {"CTR55", "containerOutOfBounds"},
-    {"DCL57", "deallocThrow,exceptThrowInDestructor"},
+    {"DCL57", "exceptDeallocThrow,exceptThrowInDestructor"},
     {"DCL60", "ctuOneDefinitionRuleViolation"},
     {"ERR57", "memleak"},
     {"EXP52", "sizeofCalculation"},
     {"EXP53", "uninitvar,uninitdata,uninitStructMember"},
     {"EXP54", "uninitvar,danglingLifetime,danglingReference,danglingTemporaryLifetime,danglingTempReference,returnDanglingLifetime"},
-    {"EXP61", "danglingLifetime,danglingReference,danglingTemporaryLifetime,danglingTempReference,returnDanglingLifetime"},
-    {"EXP63", "accessMoved"},
+    {"EXP61", "danglingLifetime,danglingReference,danglingTemporaryLifetime,danglingTempReference,deallocuse,deallocret,returnDanglingLifetime"},
+    {"EXP63", "accessMoved,uselessCallsRemove"},
     {"FIO50", "IOWithoutPositioning"},
     {"MEM50", "deallocuse"},
     {"MEM51", "mismatchAllocDealloc"},
@@ -116,35 +117,34 @@ std::vector<checkers::IdMapping> checkers::idMappingCertCpp{
     {"OOP52", "virtualDestructor"},
     {"OOP53", "initializerList"},
     {"OOP54", "operatorEqToSelf"},
-    {"STR51", "nullPointer"},
-    {"STR52", "invalidContainer"},
 };
 
 std::vector<checkers::IdMapping> checkers::idMappingMisraC{
     {"1.1", "syntaxError"},
     {"1.3", "error"},
     {"2.1", "duplicateBreak,unreachableCode"},
-    {"2.2", "constStatement,redundantCondition,redundantAssignment,redundantAssignInSwitch,unreadVariable"},
+    {"2.2", "constStatement,redundantCondition,redundantAssignment,redundantAssignInSwitch,unreadVariable,unusedFunction"},
     {"2.6", "unusedLabel"},
     {"2.8", "unusedVariable"},
     {"5.3", "shadowVariable"},
     {"8.3", "funcArgNamesDifferent"},
-    {"8.13", "constParameterPointer"},
-    {"9.1", "uninitvar"},
+    {"8.13", "constParameter,constParameterPointer,constVariablePointer,constParameterCallback"},
+    {"9.1", "uninitvar,legacyUninitvar"},
+    {"12.2", "shiftNegative"},
     {"12.5", "sizeofwithsilentarraypointer"},
     {"13.2", "unknownEvaluationOrder"},
     {"13.6", "sizeofCalculation"},
-    {"14.3", "compareValueOutOfTypeRangeError,knownConditionTrueFalse"},
+    {"14.3", "compareValueOutOfTypeRangeError,knownConditionTrueFalse,incorrectLogicOperator"},
     {"17.4", "missingReturn"},
     {"17.5", "argumentSize"},
-    {"18.1", "pointerOutOfBounds"},
+    {"18.1", "arrayIndexOutOfBounds,arrayIndexOutOfBoundsCond,pointerOutOfBounds,negativeIndex"},
     {"18.2", "comparePointers"},
     {"18.3", "comparePointers"},
-    {"18.6", "danglingLifetime,danglingTemporaryLifetime,returnDanglingLifetime"},
+    {"18.6", "autoVariables,danglingLifetime,danglingTemporaryLifetime,returnDanglingLifetime"},
     {"19.1", "overlappingWriteUnion,overlappingWriteFunction"},
-    {"20.6", "preprocessorErrorDirective"},
+    {"20.6", "directiveAsMacroParameter"},
     {"21.13", "invalidFunctionArg"},
-    {"21.17", "bufferAccessOutOfBounds"},
+    {"21.17", "invalidFunctionArgStr"},
     {"21.18", "bufferAccessOutOfBounds"},
     {"22.1", "memleak,resourceLeak,memleakOnRealloc,leakReturnValNotUsed,leakNoVarFunctionCall"},
     {"22.2", "autovarInvalidDeallocation"},
@@ -155,7 +155,7 @@ std::vector<checkers::IdMapping> checkers::idMappingMisraC{
 
 std::vector<checkers::IdMapping> checkers::idMappingMisraCpp2008{
     {"0-1-1", "unreachableCode,duplicateBreak"},
-    {"0-1-2", "unsignedLessThanZero"},
+    {"0-1-2", "unsignedLessThanZero,compareValueOutOfTypeRangeError"},
     {"0-1-3", "unusedVariable,unusedStructMember"},
     {"0-1-6", "redundantAssignment,unreadVariable,variableScope"},
     {"0-1-9", "redundantAssignment,redundantInitialization"},
@@ -168,7 +168,7 @@ std::vector<checkers::IdMapping> checkers::idMappingMisraCpp2008{
     {"5-0-16", "pointerOutOfBounds"},
     {"5-0-17", "comparePointers"},
     {"5-0-18", "comparePointers"},
-    {"5-2-4", "cstyleCast"},
+    {"5-2-4", "cstyleCast,dangerousTypeCast"},
     {"5-3-4", "sizeofFunctionCall"},
     {"5-8-1", "shiftTooManyBits"},
     {"6-6-5", "missingReturn"},

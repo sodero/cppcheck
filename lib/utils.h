@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -124,6 +125,11 @@ bool endsWith(const std::string& str, const char (&end)[N])
     return endsWith(str, end, N - 1);
 }
 
+inline bool endsWith(const std::string& str, const std::string& end)
+{
+    return endsWith(str, end.c_str(), end.length());
+}
+
 inline static bool isPrefixStringCharLiteral(const std::string &str, char q, const std::string& p)
 {
     // str must be at least the prefix plus the start and end quote
@@ -215,7 +221,7 @@ bool strToInt(const std::string& str, T &num, std::string* err = nullptr)
         tmp = std::stoll(str, &idx);
         if (idx != str.size()) {
             if (err)
-                *err = "not an integer";
+                *err = "not an integer (pos)";
             return false;
         }
     } catch (const std::out_of_range&) {
@@ -224,12 +230,22 @@ bool strToInt(const std::string& str, T &num, std::string* err = nullptr)
         return false;
     } catch (const std::invalid_argument &) {
         if (err)
-            *err = "not an integer";
+            *err = "not an integer (invalid_argument)";
         return false;
     }
     if (str.front() == '-' && std::numeric_limits<T>::min() == 0) {
         if (err)
             *err = "needs to be positive";
+        return false;
+    }
+    if (str.front() != '+' && str.front() != '-' && isdigit(str.front()) == 0) {
+        if (err)
+            *err = "not an integer";
+        return false;
+    }
+    if (str.size() > 1 && str.front() == '0') {
+        if (err)
+            *err = "not an integer";
         return false;
     }
     if (tmp < std::numeric_limits<T>::min() || tmp > std::numeric_limits<T>::max()) {
@@ -250,7 +266,7 @@ bool strToInt(const std::string& str, T &num, std::string* err = nullptr)
         tmp = std::stoull(str, &idx);
         if (idx != str.size()) {
             if (err)
-                *err = "not an integer";
+                *err = "not an integer (pos)";
             return false;
         }
     } catch (const std::out_of_range&) {
@@ -259,12 +275,22 @@ bool strToInt(const std::string& str, T &num, std::string* err = nullptr)
         return false;
     } catch (const std::invalid_argument &) {
         if (err)
-            *err = "not an integer";
+            *err = "not an integer (invalid_argument)";
         return false;
     }
     if (str.front() == '-') {
         if (err)
             *err = "needs to be positive";
+        return false;
+    }
+    if (str.front() != '+' && isdigit(str.front()) == 0) {
+        if (err)
+            *err = "not an integer";
+        return false;
+    }
+    if (str.size() > 1 && str.front() == '0') {
+        if (err)
+            *err = "not an integer";
         return false;
     }
     if (tmp > std::numeric_limits<T>::max()) {
@@ -276,6 +302,9 @@ bool strToInt(const std::string& str, T &num, std::string* err = nullptr)
     return true;
 }
 
+/**
+ * @throws std::runtime_error thrown if conversion failed
+ */
 template<typename T>
 T strToInt(const std::string& str)
 {
@@ -395,17 +424,23 @@ static inline T* empty_if_null(T* p)
 }
 
 /**
- * Split string by given sperator.
+ * Split string by given separator.
  * @param str The string to split
- * @param sep The seperator
- * @return The list of seperate strings (including empty ones). The whole input string if no seperator found.
+ * @param sep The separator
+ * @return The list of separate strings (including empty ones). The whole input string if no separator found.
  */
 CPPCHECKLIB std::vector<std::string> splitString(const std::string& str, char sep);
 
 namespace utils {
+    /**
+     * Drop-in replacement for C++17's std::as_const
+     * @param t  The function forms the lvalue reference to const type of this argument.
+     */
     template<class T>
     constexpr typename std::add_const<T>::type & as_const(T& t) noexcept
     {
+        static_assert(!std::is_const<T>::value, "object is already const");
+        static_assert(!std::is_pointer<T>::value, "object is a pointer");
         // NOLINTNEXTLINE(bugprone-return-const-ref-from-parameter) - potential false positive
         return t;
     }

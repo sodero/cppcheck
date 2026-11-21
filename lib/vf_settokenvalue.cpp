@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,7 +47,7 @@
 
 namespace ValueFlow
 {
-    static Library::Container::Yield getContainerYield(Token* tok, const Settings& settings, Token*& parent)
+    static Library::Container::Yield getContainerYield(Token* tok, const Library& library, Token*& parent)
     {
         if (Token::Match(tok, ". %name% (") && tok->astParent() == tok->tokAt(2) && tok->astOperand1() &&
             tok->astOperand1()->valueType()) {
@@ -57,7 +57,7 @@ namespace ValueFlow
         }
         if (Token::Match(tok->previous(), "%name% (")) {
             parent = tok;
-            if (const Library::Function* f = settings.library.getFunction(tok->previous())) {
+            if (const Library::Function* f = library.getFunction(tok->previous())) {
                 return f->containerYield;
             }
         }
@@ -72,7 +72,7 @@ namespace ValueFlow
             return value;
         if (!parent->isBinaryOp())
             return value;
-        if (!parent->isConstOp())
+        if (!parent->isConstOp() && !parent->isAssignmentOp())
             return value;
         if (!astIsIntegral(parent->astOperand1(), false))
             return value;
@@ -83,19 +83,19 @@ namespace ValueFlow
         // If the sign is the same there is no truncation
         if (vt1->sign == vt2->sign)
             return value;
-        const size_t n1 = getSizeOf(*vt1, settings, ValueFlow::Accuracy::ExactOrZero);
-        const size_t n2 = getSizeOf(*vt2, settings, ValueFlow::Accuracy::ExactOrZero);
+        const size_t n1 = vt1->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
+        const size_t n2 = vt2->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
         ValueType::Sign sign = ValueType::Sign::UNSIGNED;
         if (n1 < n2)
             sign = vt2->sign;
-        else if (n1 > n2)
+        else // (n1 >= n2)
             sign = vt1->sign;
         Value v = castValue(value, sign, std::max(n1, n2) * 8);
         v.wideintvalue = value.intvalue;
         return v;
     }
 
-    static const Token *getCastTypeStartToken(const Token *parent, const Settings& settings)
+    static const Token *getCastTypeStartToken(const Token *parent, const Library& library)
     {
         // TODO: This might be a generic utility function?
         if (!Token::Match(parent, "{|("))
@@ -114,7 +114,7 @@ namespace ValueFlow
                 ftok = ftok->next();
             while (Token::Match(ftok, "%name% ::"))
                 ftok = ftok->tokAt(2);
-            if (settings.library.isNotLibraryFunction(ftok))
+            if (library.isNotLibraryFunction(ftok))
                 return parent->next();
         }
         if (parent->astOperand2() && Token::Match(parent->astOperand1(), "const_cast|dynamic_cast|reinterpret_cast|static_cast <"))
@@ -126,32 +126,31 @@ namespace ValueFlow
         return value.isIntValue() || value.isFloatValue();
     }
 
-    static void setTokenValueCast(Token *parent, const ValueType &valueType, const Value &value, const Settings &settings)
+    static void setTokenValueCast(Token *parent, const ValueType &valueType, Value value, const Settings &settings)
     {
         if (valueType.pointer || value.isImpossible())
-            setTokenValue(parent,value,settings);
+            setTokenValue(parent,std::move(value),settings);
         else if (valueType.type == ValueType::Type::CHAR)
-            setTokenValue(parent, castValue(value, valueType.sign, settings.platform.char_bit), settings);
+            setTokenValue(parent, castValue(std::move(value), valueType.sign, settings.platform.char_bit), settings);
         else if (valueType.type == ValueType::Type::SHORT)
-            setTokenValue(parent, castValue(value, valueType.sign, settings.platform.short_bit), settings);
+            setTokenValue(parent, castValue(std::move(value), valueType.sign, settings.platform.short_bit), settings);
         else if (valueType.type == ValueType::Type::INT)
-            setTokenValue(parent, castValue(value, valueType.sign, settings.platform.int_bit), settings);
+            setTokenValue(parent, castValue(std::move(value), valueType.sign, settings.platform.int_bit), settings);
         else if (valueType.type == ValueType::Type::LONG)
-            setTokenValue(parent, castValue(value, valueType.sign, settings.platform.long_bit), settings);
+            setTokenValue(parent, castValue(std::move(value), valueType.sign, settings.platform.long_bit), settings);
         else if (valueType.type == ValueType::Type::LONGLONG)
-            setTokenValue(parent, castValue(value, valueType.sign, settings.platform.long_long_bit), settings);
+            setTokenValue(parent, castValue(std::move(value), valueType.sign, settings.platform.long_long_bit), settings);
         else if (valueType.isFloat() && isNumeric(value)) {
-            Value floatValue = value;
-            floatValue.valueType = Value::ValueType::FLOAT;
             if (value.isIntValue())
-                floatValue.floatValue = static_cast<double>(value.intvalue);
-            setTokenValue(parent, std::move(floatValue), settings);
+                value.floatValue = static_cast<double>(value.intvalue);
+            value.valueType = Value::ValueType::FLOAT;
+            setTokenValue(parent, std::move(value), settings);
         } else if (value.isIntValue()) {
             const long long charMax = settings.platform.signedCharMax();
             const long long charMin = settings.platform.signedCharMin();
             if (charMin <= value.intvalue && value.intvalue <= charMax) {
                 // unknown type, but value is small so there should be no truncation etc
-                setTokenValue(parent,value,settings);
+                setTokenValue(parent,std::move(value),settings);
             }
         }
     }
@@ -225,12 +224,17 @@ namespace ValueFlow
     {
         // Skip setting values that are too big since its ambiguous
         if (!value.isImpossible() && value.isIntValue() && value.intvalue < 0 && astIsUnsigned(tok)
-            && getSizeOf(*tok->valueType(), settings, ValueFlow::Accuracy::LowerBound)
+            && tok->valueType()->getSizeOf(settings, ValueType::Accuracy::LowerBound, ValueType::SizeOf::Pointer)
             >= sizeof(MathLib::bigint))
             return;
 
         if (!value.isImpossible() && value.isIntValue())
             value = truncateImplicitConversion(tok->astParent(), value, settings);
+
+        // a container size value on a container expression belongs to that expression, while a
+        // pointer or an iterator only transports the size of the container it was obtained from
+        if (value.isContainerSizeValue() && !astIsPointer(tok) && astIsContainer(tok))
+            value.container = tok;
 
         if (settings.debugnormal)
             setSourceLocation(value, loc, tok);
@@ -292,37 +296,55 @@ namespace ValueFlow
 
                         combineValueProperties(value1, value2, result);
 
-                        if (Token::simpleMatch(parent, "==") && result.intvalue)
+                        if (Token::simpleMatch(parent, "==") && result.intvalue && !(value1.intvalue == 0 && value2.intvalue == 0))
                             continue;
-                        if (Token::simpleMatch(parent, "!=") && !result.intvalue)
+                        if (Token::simpleMatch(parent, "!=") && !result.intvalue && !(value1.intvalue == 0 && value2.intvalue == 0))
                             continue;
 
                         setTokenValue(parent, std::move(result), settings);
                     }
                 }
             }
+            // an empty associative container implies that its default-inserted elements are empty as well
+            if (Token::simpleMatch(parent, "[") && astIsLHS(tok) && astIsContainer(parent) &&
+                tok->valueType()->container && tok->valueType()->container->stdAssociativeLike &&
+                !value.isImpossible() && value.intvalue == 0)
+                setTokenValue(parent, value, settings);
             Token* next = nullptr;
-            const Library::Container::Yield yields = getContainerYield(parent, settings, next);
+            const Library::Container::Yield yields = getContainerYield(parent, settings.library, next);
             if (yields == Library::Container::Yield::SIZE) {
                 value.valueType = Value::ValueType::INT;
+                value.container = nullptr;
+                setTokenValue(next, std::move(value), settings);
+            } else if (contains({Library::Container::Yield::BUFFER,
+                                 Library::Container::Yield::BUFFER_NT,
+                                 Library::Container::Yield::START_ITERATOR,
+                                 Library::Container::Yield::END_ITERATOR,
+                                 Library::Container::Yield::ITERATOR},
+                                yields)) {
+                // The returned pointer or iterator has as many elements available as the container
+                if (yields == Library::Container::Yield::BUFFER_NT)
+                    value.intvalue += 1; // ..plus the null terminator
                 setTokenValue(next, std::move(value), settings);
             } else if (yields == Library::Container::Yield::EMPTY) {
-                Value v(value);
-                v.valueType = Value::ValueType::INT;
-                v.bound = Value::Bound::Point;
+                const Value::Bound bound = value.bound;
+                const long long intvalue = value.intvalue;
+                value.valueType = Value::ValueType::INT;
+                value.container = nullptr;
+                value.bound = Value::Bound::Point;
                 if (value.isImpossible()) {
-                    if (value.intvalue == 0)
-                        v.setKnown();
-                    else if ((value.bound == Value::Bound::Upper && value.intvalue > 0) ||
-                             (value.bound == Value::Bound::Lower && value.intvalue < 0)) {
-                        v.intvalue = 0;
-                        v.setKnown();
+                    if (intvalue == 0)
+                        value.setKnown();
+                    else if ((bound == Value::Bound::Upper && intvalue > 0) ||
+                             (bound == Value::Bound::Lower && intvalue < 0)) {
+                        value.intvalue = 0;
+                        value.setKnown();
                     } else
-                        v.setPossible();
+                        value.setPossible();
                 } else {
-                    v.intvalue = !v.intvalue;
+                    value.intvalue = !value.intvalue;
                 }
-                setTokenValue(next, std::move(v), settings);
+                setTokenValue(next, std::move(value), settings);
             }
             return;
         }
@@ -346,46 +368,45 @@ namespace ValueFlow
                 setTokenValue(parent, std::move(value), settings);
                 return;
             }
-            Value pvalue = value;
             if (!value.subexpressions.empty() && Token::Match(parent, ". %var%")) {
                 if (contains(value.subexpressions, parent->strAt(1)))
-                    pvalue.subexpressions.clear();
+                    value.subexpressions.clear();
                 else
                     return;
             }
             if (parent->isUnaryOp("&")) {
-                pvalue.indirect++;
-                setTokenValue(parent, std::move(pvalue), settings);
+                value.indirect++;
+                setTokenValue(parent, std::move(value), settings);
             } else if (Token::Match(parent, ". %var%") && parent->astOperand1() == tok && parent->astOperand2()) {
-                if (parent->originalName() == "->" && pvalue.indirect > 0)
-                    pvalue.indirect--;
-                setTokenValue(parent->astOperand2(), std::move(pvalue), settings);
+                if (parent->originalName() == "->" && value.indirect > 0)
+                    value.indirect--;
+                setTokenValue(parent->astOperand2(), std::move(value), settings);
             } else if (Token::Match(parent->astParent(), ". %var%") && parent->astParent()->astOperand1() == parent) {
-                if (parent->astParent()->originalName() == "->" && pvalue.indirect > 0)
-                    pvalue.indirect--;
-                setTokenValue(parent->astParent()->astOperand2(), std::move(pvalue), settings);
-            } else if (parent->isUnaryOp("*") && pvalue.indirect > 0) {
-                pvalue.indirect--;
-                setTokenValue(parent, std::move(pvalue), settings);
+                if (parent->astParent()->originalName() == "->" && value.indirect > 0)
+                    value.indirect--;
+                setTokenValue(parent->astParent()->astOperand2(), std::move(value), settings);
+            } else if (parent->isUnaryOp("*") && value.indirect > 0) {
+                value.indirect--;
+                setTokenValue(parent, std::move(value), settings);
             }
             return;
         }
 
         // cast..
-        if (const Token *castType = getCastTypeStartToken(parent, settings)) {
+        if (const Token *castType = getCastTypeStartToken(parent, settings.library)) {
             if (contains({Value::ValueType::INT, Value::ValueType::SYMBOLIC}, value.valueType) &&
                 Token::simpleMatch(parent->astOperand1(), "dynamic_cast"))
                 return;
             const ValueType &valueType = ValueType::parseDecl(castType, settings);
             if (value.isImpossible() && value.isIntValue() && value.intvalue < 0
                 && astIsUnsigned(tok) && valueType.sign == ValueType::SIGNED && tok->valueType()
-                && getSizeOf(*tok->valueType(), settings, ValueFlow::Accuracy::ExactOrZero)
-                >= getSizeOf(valueType, settings, ValueFlow::Accuracy::ExactOrZero))
+                && tok->valueType()->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer)
+                >= valueType.getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer))
                 return;
-            setTokenValueCast(parent, valueType, value, settings);
+            setTokenValueCast(parent, valueType, std::move(value), settings);
         }
 
-        else if (parent->str() == ":") {
+        else if (parent->str() == ":" && Token::simpleMatch(parent->astParent(), "?")) {
             setTokenValue(parent,std::move(value),settings);
         }
 
@@ -421,11 +442,10 @@ namespace ValueFlow
                 if (ret)
                     return;
 
-                Value v(std::move(value));
-                v.conditional = true;
-                v.changeKnownToPossible();
+                value.conditional = true;
+                value.changeKnownToPossible();
 
-                setTokenValue(parent, std::move(v), settings);
+                setTokenValue(parent, std::move(value), settings);
             }
         }
 
@@ -615,7 +635,7 @@ namespace ValueFlow
         }
 
         // unary minus
-        else if (parent->isUnaryOp("-")) {
+        else if (parent->isUnaryOp("-") && !astIsUnsigned(parent)) {
             for (const Value &val : tok->values()) {
                 if (!val.isIntValue() && !val.isFloatValue())
                     continue;
@@ -642,9 +662,7 @@ namespace ValueFlow
                     if (v.isIntValue() || v.isSymbolicValue()) {
                         const ValueType *dst = tok->valueType();
                         if (dst) {
-                            const size_t sz = ValueFlow::getSizeOf(*dst,
-                                                                   settings,
-                                                                   ValueFlow::Accuracy::ExactOrZero);
+                            const size_t sz = dst->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
                             MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue + 1, sz, dst->sign);
                             if (v.bound != ValueFlow::Value::Bound::Point) {
                                 if (newvalue < v.intvalue) {
@@ -674,9 +692,7 @@ namespace ValueFlow
                     if (v.isIntValue() || v.isSymbolicValue()) {
                         const ValueType *dst = tok->valueType();
                         if (dst) {
-                            const size_t sz = ValueFlow::getSizeOf(*dst,
-                                                                   settings,
-                                                                   ValueFlow::Accuracy::ExactOrZero);
+                            const size_t sz = dst->getSizeOf(settings, ValueType::Accuracy::ExactOrZero, ValueType::SizeOf::Pointer);
                             MathLib::bigint newvalue = ValueFlow::truncateIntValue(v.intvalue - 1, sz, dst->sign);
                             if (v.bound != ValueFlow::Value::Bound::Point) {
                                 if (newvalue > v.intvalue) {
@@ -717,15 +733,13 @@ namespace ValueFlow
             std::vector<const Token*> args = getArguments(value.tokvalue);
             if (const Library::Function* f = settings.library.getFunction(parent->previous())) {
                 if (f->containerYield == Library::Container::Yield::SIZE) {
-                    Value v(std::move(value));
-                    v.valueType = Value::ValueType::INT;
-                    v.intvalue = args.size();
-                    setTokenValue(parent, std::move(v), settings);
+                    value.valueType = Value::ValueType::INT;
+                    value.intvalue = args.size();
+                    setTokenValue(parent, std::move(value), settings);
                 } else if (f->containerYield == Library::Container::Yield::EMPTY) {
-                    Value v(std::move(value));
-                    v.intvalue = args.empty();
-                    v.valueType = Value::ValueType::INT;
-                    setTokenValue(parent, std::move(v), settings);
+                    value.intvalue = args.empty();
+                    value.valueType = Value::ValueType::INT;
+                    setTokenValue(parent, std::move(value), settings);
                 }
             }
         }

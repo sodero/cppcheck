@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,15 +25,15 @@
 #include "config.h"
 
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <list>
 #include <memory>
 #include <string>
 #include <vector>
 
+#ifdef HAVE_RULES
 class TokenList;
-enum class ShowTime : std::uint8_t;
+#endif
 struct FileSettings;
 class CheckUnusedFunctions;
 class Tokenizer;
@@ -43,6 +43,7 @@ class ErrorLogger;
 class Settings;
 struct Suppressions;
 class Preprocessor;
+class TimerResults;
 
 namespace simplecpp {
     class TokenList;
@@ -71,6 +72,7 @@ public:
     CppCheck(const Settings& settings,
              Suppressions& supprs,
              ErrorLogger &errorLogger,
+             TimerResults* timerResults,
              bool useGlobalSuppressions,
              ExecuteCmdFn executeCommand);
 
@@ -108,7 +110,7 @@ public:
      * @note You must set settings before calling this function (by calling
      *  settings()).
      */
-    unsigned int checkBuffer(const FileWithDetails &file, const uint8_t* data, std::size_t size);
+    unsigned int checkBuffer(const FileWithDetails &file, const char* data, std::size_t size);
 
     /**
      * @brief Returns current version number as a string.
@@ -142,9 +144,6 @@ public:
     /** analyse whole program use .analyzeinfo files or ctuinfo string */
     unsigned int analyseWholeProgram(const std::string &buildDir, const std::list<FileWithDetails> &files, const std::list<FileSettings>& fileSettings, const std::string& ctuInfo);
 
-    static void resetTimerResults();
-    static void printTimerResults(ShowTime mode);
-
 private:
     void purgedConfigurationMessage(const std::string &file, const std::string& configuration);
 
@@ -154,6 +153,9 @@ private:
      * @brief Get dumpfile <rawtokens> contents, this is only public for testing purposes
      */
     std::string getDumpFileContentsRawTokens(const std::vector<std::string>& files, const simplecpp::TokenList& tokens1) const;
+    static std::string getDumpFileContentsRawTokens(const std::string& header, const std::string& footer);
+    std::string getDumpFileContentsRawTokensHeader(const std::vector<std::string>& files) const;
+    static std::string getDumpFileContentsRawTokensFooter(const simplecpp::TokenList& tokens1);
 
     std::string getLibraryDumpData() const;
 
@@ -182,9 +184,9 @@ private:
      * @param cfgname  cfg name
      * @return number of errors found
      */
-    unsigned int checkFile(const FileWithDetails& file, const std::string &cfgname, int fileIndex);
+    unsigned int checkFile(const FileWithDetails& file, const std::string &cfgname);
 
-    void checkPlistOutput(const FileWithDetails& file, const std::vector<std::string>& files);
+    void checkPlistOutput(const FileWithDetails& file);
 
     /**
      * @brief Check a file using buffer
@@ -194,7 +196,7 @@ private:
      * @param size the size of the data to be read
      * @return number of errors found
      */
-    unsigned int checkBuffer(const FileWithDetails& file, const std::string &cfgname, int fileIndex, const uint8_t* data, std::size_t size);
+    unsigned int checkBuffer(const FileWithDetails& file, const std::string &cfgname, const char* data, std::size_t size);
 
     // TODO: should use simplecpp::OutputList
     using CreateTokenListFn = std::function<simplecpp::TokenList (std::vector<std::string>&, std::list<simplecpp::Output>*)>;
@@ -203,15 +205,15 @@ private:
      * @brief Check a file using stream
      * @param file the file
      * @param cfgname  cfg name
-     * @param createTokenList a function to create the simplecpp::TokenList with - throws simplecpp::Output
+     * @param createTokenList a function to create the simplecpp::TokenList with
      * @return number of errors found
      */
-    unsigned int checkInternal(const FileWithDetails& file, const std::string &cfgname, int fileIndex, const CreateTokenListFn& createTokenList);
+    unsigned int checkInternal(const FileWithDetails& file, const std::string &cfgname, const CreateTokenListFn& createTokenList);
 
     /**
      * @brief Check normal tokens
      * @param tokenizer tokenizer instance
-     * @param analyzerInformation the analyzer infomation
+     * @param analyzerInformation the analyzer information
      */
     void checkNormalTokens(const Tokenizer &tokenizer, AnalyzerInformation* analyzerInformation, const std::string& currentConfig);
 
@@ -235,7 +237,7 @@ private:
     void executeRules(const std::string &tokenlist, const TokenList &list);
 #endif
 
-    unsigned int checkClang(const FileWithDetails &file, int fileIndex);
+    unsigned int checkClang(const FileWithDetails &file);
 
     const Settings& mSettings;
     Suppressions& mSuppressions;
@@ -246,11 +248,12 @@ private:
     ErrorLogger& mErrorLogger;
     /** the ErrorLogger provided to this instance */
     ErrorLogger& mErrorLoggerDirect;
+    TimerResults* mTimerResults;
 
     bool mUseGlobalSuppressions;
 
     /** File info used for whole program analysis */
-    std::list<Check::FileInfo*> mFileInfo;
+    std::list<const Check::FileInfo*> mFileInfo;
 
     /** Callback for executing a shell command (exe, args, output) */
     ExecuteCmdFn mExecuteCommand;

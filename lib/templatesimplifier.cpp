@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -170,8 +170,12 @@ TemplateSimplifier::TokenAndName::TokenAndName(Token *token, std::string scope, 
                 if (isFunction())
                     tok1 = tok1->link()->next();
                 while (tok1 && !Token::Match(tok1, ";|{")) {
-                    if (tok1->str() == "<")
-                        tok1 = tok1->findClosingBracket();
+                    if (tok1->str() == "<") {
+                        if (const Token* closing = tok1->findClosingBracket())
+                            tok1 = closing;
+                        else
+                            syntaxError(tok1);
+                    }
                     else if (Token::Match(tok1, "(|[") && tok1->link())
                         tok1 = tok1->link();
                     if (tok1)
@@ -219,9 +223,8 @@ TemplateSimplifier::TokenAndName::TokenAndName(Token *token, std::string scope, 
     }
 
     // make sure at most only one family flag is set
-    assert(isClass() ? !(isFunction() || isVariable()) : true);
-    assert(isFunction() ? !(isClass() || isVariable()) : true);
-    assert(isVariable() ? !(isClass() || isFunction()) : true);
+    if (isClass() + isFunction() + isVariable() > 1)
+        syntaxError(token);
 
     if (mToken)
         mToken->templateSimplifierPointer(this);
@@ -493,7 +496,7 @@ unsigned int TemplateSimplifier::templateParameters(const Token *tok)
             return 0;
 
         // num/type ..
-        if (!tok->isNumber() && tok->tokType() != Token::eChar && tok->tokType() != Token::eString && !tok->isName() && !tok->isOp())
+        if (!tok->isNumber() && tok->tokType() != Token::eChar && tok->tokType() != Token::eString && !tok->isName() && !tok->isOp() && tok->str() != ".")
             return 0;
         tok = tok->next();
         if (!tok)
@@ -624,7 +627,7 @@ void TemplateSimplifier::deleteToken(Token *tok)
         tok->deleteThis();
 }
 
-static void invalidateForwardDecls(const Token* beg, const Token* end, std::map<Token*, Token*>* forwardDecls) {
+static void invalidateForwardDecls(const Token* beg, const Token* end, std::map<const Token*, Token*>* forwardDecls) {
     if (!forwardDecls)
         return;
     for (auto& fwd : *forwardDecls) {
@@ -636,7 +639,7 @@ static void invalidateForwardDecls(const Token* beg, const Token* end, std::map<
     }
 }
 
-bool TemplateSimplifier::removeTemplate(Token *tok, std::map<Token*, Token*>* forwardDecls)
+bool TemplateSimplifier::removeTemplate(Token *tok, std::map<const Token*, Token*>* forwardDecls)
 {
     if (!Token::simpleMatch(tok, "template <"))
         return false;
@@ -690,6 +693,8 @@ bool TemplateSimplifier::getTemplateDeclarations()
             else if (Token::Match(tok2, "{|=|;")) {
                 const int namepos = getTemplateNamePosition(parmEnd);
                 if (namepos > 0) {
+                    if (!tok->scopeInfo())
+                        syntaxError(tok);
                     TokenAndName decl(tok, tok->scopeInfo()->name, parmEnd->tokAt(namepos), parmEnd);
                     if (decl.isForwardDeclaration()) {
                         // Declaration => add to mTemplateForwardDeclarations
@@ -1151,6 +1156,8 @@ void TemplateSimplifier::useDefaultArgumentValues(TokenAndName &declaration)
                     instantiationArgs[index].push_back(tok1);
                     tok1 = tok1->next();
                 } while (tok1 && tok1 != endLink);
+                if (!tok1)
+                    syntaxError(end);
                 instantiationArgs[index].push_back(tok1);
             } else if (tok1->str() == "<" &&
                        (tok1->strAt(1) == ">" || (tok1->previous()->isName() &&
@@ -1160,6 +1167,8 @@ void TemplateSimplifier::useDefaultArgumentValues(TokenAndName &declaration)
                     instantiationArgs[index].push_back(tok1);
                     tok1 = tok1->next();
                 } while (tok1 && tok1 != endLink);
+                if (!tok1)
+                    syntaxError(end);
                 instantiationArgs[index].push_back(tok1);
             } else if (tok1->str() == ",") {
                 ++index;
@@ -1760,7 +1769,7 @@ void TemplateSimplifier::expandTemplate(
                         --typeindentlevel;
                     else if (typetok->str() == "(")
                         ++typeindentlevel;
-                    else if (typetok->str() == ")")
+                    else if (typeindentlevel > 0 && typetok->str() == ")")
                         --typeindentlevel;
                     dst->insertTokenBefore(typetok->str(), typetok->originalName(), typetok->getMacroName());
                     dst->previous()->linenr(start->linenr());
@@ -2080,8 +2089,11 @@ void TemplateSimplifier::expandTemplate(
         std::stack<const Token *> templates;
         int scopeCount = 0;
         for (; tok3; tok3 = tok3->next()) {
-            if (tok3->str() == "{")
+            if (tok3->str() == "{") {
+                if (isFunction && isSpecialization && inTemplateDefinition)
+                    break;
                 ++scopeCount;
+            }
             else if (tok3->str() == "}")
                 --scopeCount;
             if (scopeCount < 0)
@@ -2099,8 +2111,6 @@ void TemplateSimplifier::expandTemplate(
                     Token * const beforeTypeToken = mTokenList.back();
                     bool pointerType = false;
                     const bool isVariadicTemplateArg = templateDeclaration.isVariadic() && itype + 1 == typeParametersInDeclaration.size();
-                    if (isVariadicTemplateArg && mTypesUsedInTemplateInstantiation.size() > 1 && !Token::Match(tok3->next(), "...|<"))
-                        continue;
                     if (isVariadicTemplateArg && Token::Match(tok3, "%name% ... %name%"))
                         tok3 = tok3->tokAt(2);
                     if (!isVariadicTemplateArg && copy && Token::Match(mTypesUsedInTemplateInstantiation[itype].token(), "%num% ,|>|>>") &&
@@ -2125,6 +2135,7 @@ void TemplateSimplifier::expandTemplate(
                         }
                     }
                     const std::string endStr(isVariadicTemplateArg ? ">" : ",>");
+                    Token* begPar = nullptr;
                     for (Token *typetok = mTypesUsedInTemplateInstantiation[itype].token();
                          typetok && (typeindentlevel > 0 || endStr.find(typetok->str()[0]) == std::string::npos);
                          typetok = typetok->next()) {
@@ -2144,10 +2155,14 @@ void TemplateSimplifier::expandTemplate(
                             ++typeindentlevel;
                         } else if (typetok->str() == "(")
                             ++typeindentlevel;
-                        else if (typetok->str() == ")")
+                        else if (typeindentlevel > 0 && typetok->str() == ")")
                             --typeindentlevel;
                         Token *back;
                         if (copy) {
+                            if (isVariadicTemplateArg && typetok == mTypesUsedInTemplateInstantiation[itype].token() && typetok->isLiteral()) {
+                                mTokenList.addtoken("(", mTokenList.back());
+                                begPar = mTokenList.back();
+                            }
                             mTokenList.addtoken(typetok, tok3);
                             back = mTokenList.back();
                         } else
@@ -2175,6 +2190,10 @@ void TemplateSimplifier::expandTemplate(
                         }
                         if (copy)
                             back->templateArgFrom(typetok);
+                    }
+                    if (begPar) {
+                        mTokenList.addtoken(")", mTokenList.back());
+                        Token::createMutualLinks(begPar, mTokenList.back());
                     }
                     if (pointerType && Token::simpleMatch(beforeTypeToken, "const")) {
                         mTokenList.addtoken(beforeTypeToken);
@@ -2243,7 +2262,7 @@ void TemplateSimplifier::expandTemplate(
                 Token::Match(tok3->next()->findClosingBracket(), ">|>>")) {
                 const Token *closingBracket = tok3->next()->findClosingBracket();
                 if (Token::simpleMatch(closingBracket->next(), "&")) {
-                    int num = 0;
+                    size_t num = 0;
                     const Token *par = tok3->next();
                     while (num < typeParametersInDeclaration.size() && par != closingBracket) {
                         const std::string pattern("[<,] " + typeParametersInDeclaration[num]->str() + " [,>]");
@@ -2854,9 +2873,9 @@ bool TemplateSimplifier::simplifyCalculations(Token* frontToken, const Token *ba
                 } else if ((((Token::Match(tok->previous(), "[=[(,] 0 * %name%|%num% ,|]|)|;|=|%cop%") ||
                               Token::Match(tok->previous(), "return|case 0 *|&& %name%|%num% ,|:|;|=|%cop%")) &&
                              validTokenEnd(bounded, tok, backToken, 3)) ||
-                            (((Token::Match(tok->previous(), "[=[(,] 0 * (") ||
-                               Token::Match(tok->previous(), "return|case 0 *|&& (")) &&
-                              validTokenEnd(bounded, tok, backToken, 2))))) {
+                            ((Token::Match(tok->previous(), "[=[(,] 0 * (") ||
+                              Token::Match(tok->previous(), "return|case 0 *|&& (")) &&
+                             validTokenEnd(bounded, tok, backToken, 2)))) {
                     tok->deleteNext();
                     if (tok->strAt(1) == "(")
                         eraseTokens(tok, tok->linkAt(1));
@@ -3026,7 +3045,7 @@ bool TemplateSimplifier::matchSpecialization(
                 declToken->isSigned() != instToken->isSigned() ||
                 declToken->isUnsigned() != instToken->isUnsigned() ||
                 declToken->isLong() != instToken->isLong()) {
-                int nr = 0;
+                size_t nr = 0;
                 while (nr < templateParameters.size() && templateParameters[nr]->str() != declToken->str())
                     ++nr;
 
@@ -3124,7 +3143,7 @@ bool TemplateSimplifier::simplifyTemplateInstantiations(
 
     // locate template usage..
     std::string::size_type numberOfTemplateInstantiations = mTemplateInstantiations.size();
-    unsigned int recursiveCount = 0;
+    int recursiveCount = 0;
 
     bool instantiated = false;
 
@@ -3147,7 +3166,7 @@ bool TemplateSimplifier::simplifyTemplateInstantiations(
                                               "templateRecursion",
                                               "TemplateSimplifier: max template recursion ("
                                               + std::to_string(mSettings.maxTemplateRecursion)
-                                              + ") reached for template '"+typeForNewName+"'. You might want to limit Cppcheck recursion.",
+                                              + ") reached for template '"+typeForNewName+"'.",
                                               Certainty::normal);
                     mErrorLogger.reportErr(errmsg);
                 }
@@ -3812,7 +3831,7 @@ void TemplateSimplifier::simplifyTemplates(const std::time_t maxtime)
         // Remove concepts/requires
         // TODO concepts are not removed yet
         for (Token *tok = mTokenList.front(); tok; tok = tok->next()) {
-            if (!Token::Match(tok, ")|>|>> requires %name%|("))
+            if (!Token::Match(tok, ")|>|>>|const|noexcept requires %name%|("))
                 continue;
             const Token* end = skipRequires(tok->next());
             if (end)
@@ -3901,6 +3920,7 @@ void TemplateSimplifier::simplifyTemplates(const std::time_t maxtime)
         std::unordered_map<std::string, int> nameOrdinal;
         int ordinal = 0;
         for (const auto& decl : mTemplateDeclarations) {
+            // cppcheck-suppress useStlAlgorithm - std::transform is cumbersome
             nameOrdinal.emplace(decl.fullName(), ordinal++);
         }
 

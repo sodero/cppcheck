@@ -32,8 +32,10 @@
 #include <QPointF>
 #include <QRegion>
 #include <QTransform>
+#include <QDir>
+#include <QTimer>
 
-// TODO: this is actually avilable via Core5Compat but I could not get it to work with pkg-config
+// TODO: this is actually available via Core5Compat but I could not get it to work with pkg-config
 #if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 #include <QLinkedList>
 #endif
@@ -52,6 +54,33 @@ int ignoredReturnValue_QSize_width(const QSize &s)
     // cppcheck-suppress ignoredReturnValue
     s.width();
     return s.width();
+}
+
+
+void ignoredReturnValue_QDir(const QString& dirname)
+{
+    QDir dir(dirname);
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.exists("abc");
+
+    // cppcheck-suppress ignoredReturnErrorCode
+    dir.mkdir("abc");
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.count();
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.filePath("abc");
+
+    // cppcheck-suppress ignoredReturnValue
+    dir.entryList();
+}
+
+void assertWithSideEffect_QDir_exists(const char *path) { // #14720
+    QDir dir(path);
+    assert(dir.exists());
+    (void)dir;
 }
 
 void unusedVariable_QTransform()
@@ -700,6 +729,7 @@ namespace {
     private:
         int m_value;
     };
+    // cppcheck-suppress shadowFunction
     void Counter1::setValue(int value) {
         if (value != m_value) {
             m_value = value;
@@ -723,6 +753,7 @@ namespace {
     private:
         int m_value;
     };
+    // cppcheck-suppress shadowFunction
     void Counter2::setValue(int value) {
         if (value != m_value) {
             m_value = value;
@@ -862,3 +893,20 @@ int qdateIsValid()
     Q_ASSERT(qd.isValid()); // Should not warn here with assertWithSideEffect
     return qd.month(); 
 }
+
+void qAssertX()
+{
+    const char *where = "test";
+    const char *what = "assertion failed";
+    Q_ASSERT_X(false, where, what);
+}
+
+struct S_QTimer_connect : QObject { // #13846
+    S_QTimer_connect() {
+        // cppcheck-suppress checkLibraryFunction - timeout() is a signal from QTimer
+        QObject::connect(&timer, SIGNAL(timeout()), this, SLOT(update()));
+    }
+    QTimer timer;
+private slots:
+    bool update();
+};

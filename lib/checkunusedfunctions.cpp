@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 //---------------------------------------------------------------------------
 #include "checkunusedfunctions.h"
 
+#include "analyzerinfo.h"
 #include "astutils.h"
 #include "errorlogger.h"
 #include "errortypes.h"
@@ -34,7 +35,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <fstream>
+#include <functional>
 #include <map>
 #include <sstream>
 #include <tuple>
@@ -64,11 +65,11 @@ static bool isRecursiveCall(const Token* ftok)
     return ftok->function() && ftok->function() == Scope::nestedInFunction(ftok->scope());
 }
 
-void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Settings &settings)
+void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Library &library)
 {
     const char * const FileName = tokenizer.list.getFiles().front().c_str();
 
-    const bool doMarkup = settings.library.markupFile(FileName);
+    const bool doMarkup = library.markupFile(FileName);
 
     // Function declarations..
     if (!doMarkup) {
@@ -138,8 +139,8 @@ void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Setting
             lambdaEndToken = findLambdaEndToken(tok);
 
         // parsing of library code to find called functions
-        if (settings.library.isexecutableblock(FileName, tok->str())) {
-            const Token * markupVarToken = tok->tokAt(settings.library.blockstartoffset(FileName));
+        if (library.isexecutableblock(FileName, tok->str())) {
+            const Token * markupVarToken = tok->tokAt(library.blockstartoffset(FileName));
             // not found
             if (!markupVarToken)
                 continue;
@@ -147,12 +148,12 @@ void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Setting
             bool start = true;
             // find all function calls in library code (starts with '(', not if or while etc)
             while ((scope || start) && markupVarToken) {
-                if (markupVarToken->str() == settings.library.blockstart(FileName)) {
+                if (markupVarToken->str() == library.blockstart(FileName)) {
                     scope++;
                     start = false;
-                } else if (markupVarToken->str() == settings.library.blockend(FileName))
+                } else if (markupVarToken->str() == library.blockend(FileName))
                     scope--;
-                else if (!settings.library.iskeyword(FileName, markupVarToken->str())) {
+                else if (!library.iskeyword(FileName, markupVarToken->str())) {
                     mFunctionCalls.insert(markupVarToken->str());
                     if (mFunctions.find(markupVarToken->str()) != mFunctions.end())
                         mFunctions[markupVarToken->str()].usedOtherFile = true;
@@ -170,10 +171,10 @@ void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Setting
         }
 
         if (!doMarkup // only check source files
-            && settings.library.isexporter(tok->str()) && tok->next() != nullptr) {
+            && library.isexporter(tok->str()) && tok->next() != nullptr) {
             const Token * propToken = tok->next();
             while (propToken && propToken->str() != ")") {
-                if (settings.library.isexportedprefix(tok->str(), propToken->str())) {
+                if (library.isexportedprefix(tok->str(), propToken->str())) {
                     const Token* nextPropToken = propToken->next();
                     const std::string& value = nextPropToken->str();
                     if (mFunctions.find(value) != mFunctions.end()) {
@@ -181,7 +182,7 @@ void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Setting
                     }
                     mFunctionCalls.insert(value);
                 }
-                if (settings.library.isexportedsuffix(tok->str(), propToken->str())) {
+                if (library.isexportedsuffix(tok->str(), propToken->str())) {
                     const Token* prevPropToken = propToken->previous();
                     const std::string& value = prevPropToken->str();
                     if (value != ")" && mFunctions.find(value) != mFunctions.end()) {
@@ -193,7 +194,7 @@ void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Setting
             }
         }
 
-        if (doMarkup && settings.library.isimporter(FileName, tok->str()) && tok->next()) {
+        if (doMarkup && library.isimporter(FileName, tok->str()) && tok->next()) {
             const Token * propToken = tok->next();
             if (propToken->next()) {
                 propToken = propToken->next();
@@ -209,8 +210,8 @@ void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Setting
             }
         }
 
-        if (settings.library.isreflection(tok->str())) {
-            const int argIndex = settings.library.reflectionArgument(tok->str());
+        if (library.isreflection(tok->str())) {
+            const int argIndex = library.reflectionArgument(tok->str());
             if (argIndex >= 0) {
                 const Token * funcToken = tok->next();
                 int index = 0;
@@ -260,11 +261,14 @@ void CheckUnusedFunctions::parseTokens(const Tokenizer &tokenizer, const Setting
             while (Token::Match(funcname, "%name% :: %name%"))
                 funcname = funcname->tokAt(2);
 
+            if (funcname && funcname->isName() && !funcname->function() && !tok->astParent() && Token::Match(tok, "[(,]")) // unknown type in parameter list
+                continue;
+
             if (!Token::Match(funcname, "%name% [(),;]:}<>]"))
                 continue;
         }
 
-        if (!funcname || funcname->isKeyword() || funcname->isStandardType() || funcname->varId() || funcname->enumerator() || funcname->type())
+        if (!funcname || funcname->isKeyword() || funcname->isStandardType() || funcname->varId() || funcname->enumerator() || funcname->type() || funcname->isLiteral())
             continue;
 
         // funcname ( => Assert that the end parentheses isn't followed by {
@@ -362,7 +366,7 @@ void CheckUnusedFunctions::staticFunctionError(ErrorLogger& errorLogger,
         errorLogger.reportErr(errmsg); \
     } while (false)
 
-bool CheckUnusedFunctions::check(const Settings& settings, ErrorLogger& errorLogger) const
+bool CheckUnusedFunctions::check(const Library& library, ErrorLogger& errorLogger) const
 {
     logChecker("CheckUnusedFunctions::check"); // unusedFunction
 
@@ -375,7 +379,7 @@ bool CheckUnusedFunctions::check(const Settings& settings, ErrorLogger& errorLog
         const FunctionUsage &func = it->second;
         if (func.usedOtherFile || func.filename.empty())
             continue;
-        if (settings.library.isentrypoint(it->first))
+        if (library.isentrypoint(it->first))
             continue;
         if (!func.usedSameFile) {
             if (isOperatorFunction(it->first))
@@ -384,7 +388,7 @@ bool CheckUnusedFunctions::check(const Settings& settings, ErrorLogger& errorLog
             if (func.filename != "+")
                 filename = func.filename;
             errors.emplace_back(filename, func.fileIndex, func.lineNumber, func.column, it->first);
-        } else if (func.isC && !func.isStatic && !func.usedOtherFile) {
+        } else if (func.isC && !func.isStatic) {
             std::string filename;
             if (func.filename != "+")
                 filename = func.filename;
@@ -457,54 +461,35 @@ void CheckUnusedFunctions::analyseWholeProgram(const Settings &settings, ErrorLo
     std::map<std::string, Location> decls;
     std::set<std::string> calls;
 
-    const std::string filesTxt(buildDir + "/files.txt");
-    std::ifstream fin(filesTxt.c_str());
-    std::string filesTxtLine;
-    while (std::getline(fin, filesTxtLine)) {
-        const std::string::size_type firstColon = filesTxtLine.find(':');
-        if (firstColon == std::string::npos)
-            continue;
-        const std::string::size_type secondColon = filesTxtLine.find(':', firstColon+1);
-        if (secondColon == std::string::npos)
-            continue;
-        const std::string xmlfile = buildDir + '/' + filesTxtLine.substr(0,firstColon);
-        const std::string sourcefile = filesTxtLine.substr(secondColon+1);
-
-        tinyxml2::XMLDocument doc;
-        const tinyxml2::XMLError error = doc.LoadFile(xmlfile.c_str());
-        if (error != tinyxml2::XML_SUCCESS)
-            continue;
-
-        const tinyxml2::XMLElement * const rootNode = doc.FirstChildElement();
-        if (rootNode == nullptr)
-            continue;
-
-        for (const tinyxml2::XMLElement *e = rootNode->FirstChildElement(); e; e = e->NextSiblingElement()) {
-            if (std::strcmp(e->Name(), "FileInfo") != 0)
+    const auto handler = [&decls, &calls](const char* checkattr, const tinyxml2::XMLElement* e, const AnalyzerInformation::Info& filesTxtInfo) {
+        if (std::strcmp(checkattr,"CheckUnusedFunctions") != 0)
+            return;
+        for (const tinyxml2::XMLElement *e2 = e->FirstChildElement(); e2; e2 = e2->NextSiblingElement()) {
+            const char* functionName = e2->Attribute("functionName");
+            if (functionName == nullptr)
                 continue;
-            const char *checkattr = e->Attribute("check");
-            if (checkattr == nullptr || std::strcmp(checkattr,"CheckUnusedFunctions") != 0)
+            const char* name = e2->Name();
+            if (std::strcmp(name,"functioncall") == 0) {
+                calls.insert(functionName);
                 continue;
-            for (const tinyxml2::XMLElement *e2 = e->FirstChildElement(); e2; e2 = e2->NextSiblingElement()) {
-                const char* functionName = e2->Attribute("functionName");
-                if (functionName == nullptr)
-                    continue;
-                const char* name = e2->Name();
-                if (std::strcmp(name,"functioncall") == 0) {
-                    calls.insert(functionName);
-                    continue;
-                }
-                if (std::strcmp(name,"functiondecl") == 0) {
-                    const char* lineNumber = e2->Attribute("lineNumber");
-                    if (lineNumber) {
-                        const char* file = e2->Attribute("file");
-                        const char* column = default_if_null(e2->Attribute("column"), "0");
-                        // cppcheck-suppress templateInstantiation - TODO: fix this - see #11631
-                        decls[functionName] = Location(file ? file : sourcefile, strToInt<int>(lineNumber), strToInt<int>(column));
-                    }
+            }
+            if (std::strcmp(name,"functiondecl") == 0) {
+                const char* lineNumber = e2->Attribute("lineNumber");
+                if (lineNumber) {
+                    const char* file = e2->Attribute("file");
+                    const char* column = default_if_null(e2->Attribute("column"), "0");
+                    // cppcheck-suppress templateInstantiation - TODO: fix this - see #11631
+                    decls[functionName] = Location(file ? file : filesTxtInfo.sourceFile, strToInt<int>(lineNumber), strToInt<int>(column));
                 }
             }
         }
+    };
+
+    const std::string err = AnalyzerInformation::processFilesTxt(buildDir, handler, settings.debugainfo);
+    if (!err.empty()) {
+        const ErrorMessage errmsg({}, "", Severity::error, err, "internalError", Certainty::normal);
+        errorLogger.reportErr(errmsg);
+        return;
     }
 
     for (auto decl = decls.cbegin(); decl != decls.cend(); ++decl) {
@@ -520,9 +505,9 @@ void CheckUnusedFunctions::analyseWholeProgram(const Settings &settings, ErrorLo
     }
 }
 
-void CheckUnusedFunctions::updateFunctionData(const CheckUnusedFunctions& check)
+void CheckUnusedFunctions::updateFunctionData(const CheckUnusedFunctions& checkUnusedFunctions)
 {
-    for (const auto& entry : check.mFunctions)
+    for (const auto& entry : checkUnusedFunctions.mFunctions)
     {
         FunctionUsage &usage = mFunctions[entry.first];
         if (!usage.lineNumber) {
@@ -536,6 +521,6 @@ void CheckUnusedFunctions::updateFunctionData(const CheckUnusedFunctions& check)
         usage.usedOtherFile |= entry.second.usedOtherFile;
         usage.usedSameFile |= entry.second.usedSameFile;
     }
-    mFunctionDecl.insert(mFunctionDecl.cend(), check.mFunctionDecl.cbegin(), check.mFunctionDecl.cend());
-    mFunctionCalls.insert(check.mFunctionCalls.cbegin(), check.mFunctionCalls.cend());
+    mFunctionDecl.insert(mFunctionDecl.cend(), checkUnusedFunctions.mFunctionDecl.cbegin(), checkUnusedFunctions.mFunctionDecl.cend());
+    mFunctionCalls.insert(checkUnusedFunctions.mFunctionCalls.cbegin(), checkUnusedFunctions.mFunctionCalls.cend());
 }

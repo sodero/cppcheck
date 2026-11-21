@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <iosfwd>
 #include <list>
@@ -40,7 +41,6 @@
 #include <utility>
 #include <vector>
 
-class Platform;
 class Function;
 class Scope;
 class Settings;
@@ -651,7 +651,7 @@ public:
         return mValueType;
     }
 
-    void setValueType(const ValueType &valueType);
+    void setValueType(const ValueType &vt);
 
     AccessControl accessControl() const {
         return mAccess;
@@ -767,16 +767,19 @@ public:
 
     std::string fullName() const;
 
-    nonneg int argCount() const {
+    size_t argCount() const {
         return argumentList.size();
     }
-    nonneg int minArgCount() const {
+    size_t minArgCount() const {
         return argumentList.size() - initArgCount;
     }
-    const Variable* getArgumentVar(nonneg int num) const;
-    nonneg int initializedArgCount() const {
+    const Variable* getArgumentVar(size_t num) const;
+    size_t initializedArgCount() const {
         return initArgCount;
     }
+    /**
+     * @throws InternalError thrown on unrecognized lambda
+     */
     void addArguments(const Scope *scope);
 
     /** @brief check if this function is virtual in the base classes */
@@ -925,7 +928,7 @@ public:
     const Scope* functionScope{};     ///< scope of function body
     const Scope* nestedIn{};          ///< Scope the function is declared in
     std::list<Variable> argumentList; ///< argument list, must remain list due to clangimport usage!
-    nonneg int initArgCount{};        ///< number of args with default values
+    size_t initArgCount{};            ///< number of args with default values
     FunctionType type = FunctionType::eFunction; ///< constructor, destructor, ...
     const Token* noexceptArg{};       ///< noexcept token
     const Token* throwArg{};          ///< throw token
@@ -942,6 +945,7 @@ public:
     static bool returnsStandardType(const Function* function, bool unknown = false);
 
     static bool returnsVoid(const Function* function, bool unknown = false);
+    static bool isCoroutine(const Function* function, const Standards &standards, const Tokenizer &tokens);
 
     static std::vector<const Token*> findReturns(const Function* f);
 
@@ -1140,9 +1144,14 @@ public:
      * @brief find a function
      * @param tok token of function call
      * @param requireConst if const refers to a const variable only const methods should be matched
+     * @param ref reference qualification of the object the function is called on
+     * @param funcName name to look up instead of tok->str(), e.g. "operator()" when tok is a variable that is called
      * @return pointer to function if found or NULL if not found
      */
-    const Function *findFunction(const Token *tok, bool requireConst=false, Reference ref=Reference::None) const;
+    const Function* findFunction(const Token* tok,
+                                 bool requireConst = false,
+                                 Reference ref = Reference::None,
+                                 const std::string& funcName = "") const;
 
     const Scope *findRecordInNestedList(const std::string & name, bool isC = false) const;
     Scope *findRecordInNestedList(const std::string & name, bool isC = false);
@@ -1154,7 +1163,7 @@ public:
      * @brief find if name is in nested list
      * @param name name of nested scope
      */
-    Scope *findInNestedListRecursive(const std::string & name);
+    const Scope *findInNestedListRecursive(const std::string & name) const;
 
     void addVariable(const Token *token_, const Token *start_,
                      const Token *end_, AccessControl access_, const Type *type_,
@@ -1206,7 +1215,10 @@ private:
      */
     bool isVariableDeclaration(const Token* tok, const Token*& vartok, const Token*& typetok) const;
 
-    void findFunctionInBase(const Token* tok, nonneg int args, std::vector<const Function *> & matches) const;
+    void findFunctionInBase(const std::string& name,
+                            const Token* tok,
+                            size_t args,
+                            std::vector<const Function*>& matches) const;
 
     /** @brief initialize varlist */
     void getVariableList(const Token *start, const Token *end);
@@ -1312,7 +1324,15 @@ public:
 
     bool isVolatile(nonneg int indirect = 0) const;
 
-    MathLib::bigint typeSize(const Platform &platform, bool p=false) const;
+    enum class Accuracy : std::uint8_t {
+        ExactOrZero,
+        LowerBound,
+    };
+    enum class SizeOf : std::uint8_t {
+        Pointer,
+        Pointee,
+    };
+    size_t getSizeOf(const Settings& settings, Accuracy accuracy, SizeOf sizeOf, int maxRecursion = 0) const;
 
     /// Check if type is the same ignoring const and references
     bool isTypeEqual(const ValueType* that) const;
@@ -1413,13 +1433,13 @@ public:
     /** Set array dimensions when valueflow analysis is completed */
     void setArrayDimensionsUsingValueFlow();
 
-    void clangSetVariables(const std::vector<const Variable *> &variableList);
+    void clangSetVariables(const std::vector<const Variable *> &vars);
     void createSymbolDatabaseExprIds();
 
     /* returns the opening { if tok points to enum */
     static const Token* isEnumDefinition(const Token* tok);
 
-    static void getErrorMessages(ErrorLogger &errorLogger);
+    static void getErrorMessages(ErrorLogger& /*errorLogger*/);
 
     // check if type has no side effects (no constructors and no members with constructors)
     /** @todo false negative: check constructors for side effects */
@@ -1430,6 +1450,9 @@ private:
     friend class Function;
 
     // Create symboldatabase...
+    /**
+     * @throws InternalError thrown on unhandled code
+     */
     void createSymbolDatabaseFindAllScopes();
     void createSymbolDatabaseClassInfo();
     void createSymbolDatabaseVariableInfo();
@@ -1453,6 +1476,9 @@ private:
     void addClassFunction(Scope *&scope, const Token *&tok, const Token *argStart);
     RET_NONNULL static Function *addGlobalFunctionDecl(Scope*& scope, const Token* tok, const Token *argStart, const Token* funcStart);
     Function *addGlobalFunction(Scope*& scope, const Token*& tok, const Token *argStart, const Token* funcStart);
+    /**
+     * @throws InternalError thrown on unrecognized function
+     */
     void addNewFunction(Scope *&scope, const Token *&tok);
     bool isFunction(const Token *tok, const Scope* outerScope, const Token *&funcStart, const Token *&argStart, const Token*& declEnd) const;
     const Type *findTypeInNested(const Token *startTok, const Scope *startScope) const;
@@ -1477,6 +1503,7 @@ private:
     void validateExecutableScopes() const;
     /**
      * @brief Check variable list, e.g. variables w/o scope
+     * @throws InternalError thrown on variable without scope
      */
     void validateVariables() const;
 

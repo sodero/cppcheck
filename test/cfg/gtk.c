@@ -11,7 +11,15 @@
 #include <glib.h>
 #include <glib/gtypes.h>
 #include <glib/gi18n.h>
+#include <gtk/gtk.h>
 
+
+#if GLIB_CHECK_VERSION(2, 3, 4)
+#endif
+#if GTK_CHECK_VERSION(4, 5, 6)
+#endif
+#if ATK_CHECK_VERSION(2, 3, 6)
+#endif
 
 void validCode(int argInt, GHashTableIter * hash_table_iter, GHashTable * hash_table)
 {
@@ -51,6 +59,14 @@ void validCode(int argInt, GHashTableIter * hash_table_iter, GHashTable * hash_t
     g_string_free(pGStr1, TRUE);
 
     gchar * pGchar1 = g_strconcat("a", "b", NULL);
+
+    // g_str_has_prefix and g_str_has_suffix can have side effects because they use
+    // g_return_val_if_fail, which logs to the console upon failure
+    // cppcheck-suppress assertWithSideEffect
+    g_assert_true(g_str_has_prefix(pGchar1, "a"));
+    // cppcheck-suppress assertWithSideEffect
+    g_assert_true(g_str_has_suffix(pGchar1, "b"));
+
     printf("%s", pGchar1);
     g_free(pGchar1);
 
@@ -74,6 +90,10 @@ void validCode(int argInt, GHashTableIter * hash_table_iter, GHashTable * hash_t
         // cppcheck-suppress valueFlowBailout // TODO: caused by <pure/>?
         printf("%s", str);
     g_free(str);
+
+    // transfer none functions: return value should not be unreffed
+    const GApplication *app = g_application_get_default();
+    printf("%p\n", app);
 }
 
 void g_malloc_test()
@@ -293,7 +313,6 @@ void g_new_if_test()
     };
 
     const struct a * pNew3;
-    // cppcheck-suppress valueFlowBailoutIncompleteVar
     if (pNew3 = g_new(struct a, 6)) {
         printf("%p", pNew3);
     }
@@ -306,7 +325,6 @@ void g_new0_test()
         int b;
     };
     // valid
-    // cppcheck-suppress valueFlowBailoutIncompleteVar
     struct a * pNew1 = g_new0(struct a, 5);
     printf("%p", pNew1);
     g_free(pNew1);
@@ -325,7 +343,6 @@ void g_try_new_test()
         int b;
     };
     // valid
-    // cppcheck-suppress valueFlowBailoutIncompleteVar
     struct a * pNew1 = g_try_new(struct a, 5);
     printf("%p", pNew1);
     g_free(pNew1);
@@ -343,7 +360,6 @@ void g_try_new0_test()
         int b;
     };
     // valid
-    // cppcheck-suppress valueFlowBailoutIncompleteVar
     struct a * pNew1 = g_try_new0(struct a, 5);
     printf("%p", pNew1);
     g_free(pNew1);
@@ -361,7 +377,7 @@ void g_renew_test()
     struct a {
         int b;
     };
-    // cppcheck-suppress [leakReturnValNotUsed,valueFlowBailoutIncompleteVar]
+    // cppcheck-suppress leakReturnValNotUsed
     g_renew(struct a, NULL, 1);
 
     struct a * pNew = g_new(struct a, 1);
@@ -376,7 +392,7 @@ void g_try_renew_test()
     struct a {
         int b;
     };
-    // cppcheck-suppress [leakReturnValNotUsed,valueFlowBailoutIncompleteVar]
+    // cppcheck-suppress leakReturnValNotUsed
     g_try_renew(struct a, NULL, 1);
 
     struct a * pNew = g_try_new(struct a, 1);
@@ -398,6 +414,7 @@ void g_error_new_test()
     g_error_new(1, -2, "a %d", 1);
 
     const GError * pNew2 = g_error_new(1, -2, "a %d", 1);
+    g_assert_true(g_error_matches(pNew2, 1, -2));
     printf("%p", pNew2);
     // cppcheck-suppress memleak
 }
@@ -522,6 +539,16 @@ void g_variant_test() {
     // cppcheck-suppress memleak
 }
 
+void g_list_test() {
+    GList *list1 = NULL;
+    gchar *c = "c";
+
+    list1 = g_list_append(list1, c);
+    g_assert_true(g_list_find(list1, c) != NULL);
+
+    g_list_free(list1);
+}
+
 void g_queue_test() {
     // cppcheck-suppress leakReturnValNotUsed
     g_queue_new();
@@ -576,4 +603,55 @@ void g_tree_test() {
     const GTree *tree2 = g_tree_new((GCompareFunc)g_strcmp0);
     printf("%p\n", tree2);
     // cppcheck-suppress memleak
+}
+
+void gtk_widget_destroy_test() {
+    GtkWidget *widget = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_widget_show(widget);
+    // cppcheck-suppress memleak
+
+    widget = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_widget_show(widget);
+    // cppcheck-suppress mismatchAllocDealloc
+    g_object_unref(widget);
+}
+
+void g_return_if_fail_test(const char *s) {
+    // cppcheck-suppress valueFlowBailout
+    g_return_if_fail(s);
+
+    if (*s)
+        // cppcheck-suppress valueFlowBailout
+        g_return_if_fail(*s == 'a');
+    else
+        g_info("Test the else branch can be parsed");
+}
+
+int g_return_val_if_fail_test(const char *s) {
+    // cppcheck-suppress valueFlowBailout
+    g_return_val_if_fail(s, 1);
+
+    if (*s)
+        // cppcheck-suppress valueFlowBailout
+        g_return_val_if_fail(*s == 'a', 1);
+    else
+        g_info("Test the else branch can be parsed");
+
+    return 0;
+}
+
+void g_return_if_reached_test(const char *s) {
+    if (s)
+        g_return_if_reached();
+    else
+        g_info("Test the else branch can be parsed");
+}
+
+int g_return_val_if_reached_test(const char *s) {
+    if (s)
+        g_return_val_if_reached(1);
+    else
+        g_info("Test the else branch can be parsed");
+
+    return 0;
 }

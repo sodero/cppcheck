@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,8 +18,6 @@
 
 #ifndef CPPCHECKLIBRARYDATA_H
 #define CPPCHECKLIBRARYDATA_H
-
-#include "config.h"
 
 #include <cstdint>
 #include <utility>
@@ -230,7 +228,7 @@ public:
         entrypoints.clear();
     }
 
-    void swap(CppcheckLibraryData &other) NOEXCEPT {
+    void swap(CppcheckLibraryData &other) noexcept {
         containers.swap(other.containers);
         defines.swap(other.defines);
         undefines.swap(other.undefines);

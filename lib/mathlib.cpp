@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <exception>
 #include <limits>
 #include <locale>
 #include <sstream>
@@ -267,7 +266,7 @@ MathLib::value MathLib::value::shiftLeft(const MathLib::value &v) const
     if (!isInt() || !v.isInt())
         throw InternalError(nullptr, "Shift operand is not integer");
     MathLib::value ret(*this);
-    if (v.mIntValue >= MathLib::bigint_bits) {
+    if (v.mIntValue < 0 || v.mIntValue >= MathLib::bigint_bits || ret.mIntValue < 0) {
         return ret;
     }
     ret.mIntValue <<= v.mIntValue;
@@ -279,7 +278,7 @@ MathLib::value MathLib::value::shiftRight(const MathLib::value &v) const
     if (!isInt() || !v.isInt())
         throw InternalError(nullptr, "Shift operand is not integer");
     MathLib::value ret(*this);
-    if (v.mIntValue >= MathLib::bigint_bits) {
+    if (v.mIntValue < 0 || v.mIntValue >= MathLib::bigint_bits) {
         return ret;
     }
     ret.mIntValue >>= v.mIntValue;
@@ -344,8 +343,13 @@ MathLib::biguint MathLib::toBigUNumber(const std::string & str, const Token * co
         return static_cast<biguint>(static_cast<bigint>(doubleval));
     }
 
-    if (isCharLiteral(str))
-        return simplecpp::characterLiteralToLL(str);
+    if (isCharLiteral(str)) {
+        try {
+            return simplecpp::characterLiteralToLL(str);
+        } catch (const std::runtime_error& e) {
+            throw InternalError(tok, "Internal Error. MathLib::toBigUNumber: characterLiteralToLL(" + str + ") => " + e.what());
+        }
+    }
 
     try {
         std::size_t idx = 0;
@@ -429,8 +433,13 @@ MathLib::bigint MathLib::toBigNumber(const std::string & str, const Token * cons
         return static_cast<bigint>(doubleval);
     }
 
-    if (isCharLiteral(str))
-        return simplecpp::characterLiteralToLL(str);
+    if (isCharLiteral(str)) {
+        try {
+            return simplecpp::characterLiteralToLL(str);
+        } catch (const std::runtime_error& e) {
+            throw InternalError(tok, "Internal Error. MathLib::toBigNumber: characterLiteralToLL(" + str + ") => " + e.what());
+        }
+    }
 
     try {
         std::size_t idx = 0;
@@ -505,7 +514,7 @@ double MathLib::toDoubleNumber(const std::string &str, const Token * const tok)
     if (isCharLiteral(str)) {
         try {
             return simplecpp::characterLiteralToLL(str);
-        } catch (const std::exception& e) {
+        } catch (const std::runtime_error& e) {
             throw InternalError(tok, "Internal Error. MathLib::toDoubleNumber: characterLiteralToLL(" + str + ") => " + e.what());
         }
     }
@@ -1215,7 +1224,7 @@ std::string MathLib::calculate(const std::string &first, const std::string &seco
         return MathLib::toString(MathLib::toBigNumber(first) ^ MathLib::toBigNumber(second)) + intsuffix(first, second);
 
     default:
-        throw InternalError(nullptr, std::string("Unexpected action '") + action + "' in MathLib::calculate(). Please report this to Cppcheck developers.");
+        throw InternalError(nullptr, std::string("Unexpected action '") + action + "' in MathLib::calculate().");
     }
 }
 

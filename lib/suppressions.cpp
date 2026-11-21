@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,20 +18,23 @@
 
 #include "suppressions.h"
 
+#include "addoninfo.h"
 #include "errorlogger.h"
 #include "filesettings.h"
 #include "path.h"
 #include "pathmatch.h"
 #include "utils.h"
 #include "token.h"
-#include "tokenize.h"
 #include "tokenlist.h"
+#include "settings.h"
 
 #include <algorithm>
 #include <cctype>   // std::isdigit, std::isalnum, etc
 #include <cstring>
+#include <exception>
 #include <functional> // std::bind, std::placeholders
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 #include "xml.h"
@@ -133,7 +136,10 @@ std::string SuppressionList::parseXmlFile(const char *filename)
                 s.lineNumber = strToInt<int>(text);
             else if (std::strcmp(name, "symbolName") == 0)
                 s.symbolName = text;
-            else if (*text && std::strcmp(name, "hash") == 0)
+            else if (std::strcmp(name, "macroName") == 0) {
+                s.macroName = text;
+                s.type = SuppressionList::Type::macro;
+            } else if (*text && std::strcmp(name, "hash") == 0)
                 s.hash = strToInt<std::size_t>(text);
             else
                 return std::string("unknown element '") + name + "' in suppressions XML '" + filename + "', expected id/fileName/lineNumber/symbolName/hash.";
@@ -145,6 +151,36 @@ std::string SuppressionList::parseXmlFile(const char *filename)
     }
 
     return "";
+}
+
+static std::string getExtraComment(const std::string &comment, std::string::size_type startPos, std::string::size_type *delimPos = nullptr)
+{
+    const std::string::size_type semiPos = comment.find(';', startPos);
+    const std::string::size_type slashPos = comment.find("//", startPos);
+    std::string::size_type pos;
+
+    if (delimPos)
+        *delimPos = std::min(semiPos, slashPos);
+
+    if (semiPos < slashPos) {
+        pos = semiPos + 1;
+    } else if (slashPos < semiPos) {
+        pos = slashPos + 2;
+    } else {
+        return "";
+    }
+
+    std::string extra = comment.substr(pos);
+
+    if (startsWith(comment, "/*") && endsWith(comment, "*/"))
+        extra.erase(extra.size() - 2, 2);
+
+    extra = trim(extra);
+
+    for (auto it = extra.begin(); it != extra.end();)
+        it = (*it & 0x80) ? extra.erase(it) : it + 1;
+
+    return extra;
 }
 
 std::vector<SuppressionList::Suppression> SuppressionList::parseMultiSuppressComment(const std::string &comment, std::string *errorMessage)
@@ -201,12 +237,19 @@ std::vector<SuppressionList::Suppression> SuppressionList::parseMultiSuppressCom
         suppressions.push_back(std::move(s));
     }
 
+    const std::string extraComment = getExtraComment(comment, end_position);
+
+    if (extraComment.empty())
+        return suppressions;
+
+    for (auto &suppression : suppressions)
+        suppression.extraComment = extraComment;
+
     return suppressions;
 }
 
-SuppressionList::Suppression SuppressionList::parseLine(const std::string &line)
+SuppressionList::Suppression SuppressionList::parseLine(std::string line)
 {
-    std::istringstream lineStream;
     SuppressionList::Suppression suppression;
 
     // Strip any end of line comments
@@ -215,13 +258,18 @@ SuppressionList::Suppression SuppressionList::parseLine(const std::string &line)
         while (endpos > 0 && std::isspace(line[endpos-1])) {
             endpos--;
         }
-        lineStream.str(line.substr(0, endpos));
-    } else {
-        lineStream.str(line);
+        line.resize(endpos);
     }
 
-    if (std::getline(lineStream, suppression.errorId, ':')) {
-        if (std::getline(lineStream, suppression.fileName)) {
+    const auto parts = splitString(line, '\n');
+    const std::string& suppr_l = parts[0];
+
+    const std::string::size_type first_sep = suppr_l.find(':');
+    suppression.errorId = suppr_l.substr(0, first_sep);
+    if (first_sep != std::string::npos) {
+        suppression.fileName = suppr_l.substr(first_sep+1);
+        if (!suppression.fileName.empty()) {
+            // TODO: this only works with files which have an extension
             // If there is not a dot after the last colon in "file" then
             // the colon is a separator and the contents after the colon
             // is a line number..
@@ -231,30 +279,48 @@ SuppressionList::Suppression SuppressionList::parseLine(const std::string &line)
 
             // if a colon is found and there is no dot after it..
             if (pos != std::string::npos &&
-                suppression.fileName.find('.', pos) == std::string::npos) {
-                // Try to parse out the line number
-                try {
-                    std::istringstream istr1(suppression.fileName.substr(pos+1));
-                    istr1 >> suppression.lineNumber;
-                } catch (...) {
-                    suppression.lineNumber = SuppressionList::Suppression::NO_LINE;
-                }
+                suppression.fileName.find('.', pos) == std::string::npos)
+            {
+                // parse out the line number
+                const std::string line_s = suppression.fileName.substr(pos+1);
+                suppression.fileName.erase(pos);
 
-                if (suppression.lineNumber != SuppressionList::Suppression::NO_LINE) {
-                    suppression.fileName.erase(pos);
+                if (suppression.fileName.empty())
+                    throw std::runtime_error("filename is missing");
+
+                try {
+                    suppression.lineNumber = strToInt<int>(line_s);
+                } catch (const std::runtime_error& e) {
+                    throw std::runtime_error(std::string("invalid line number (") + e.what() + ")");
                 }
             }
+            suppression.fileName = Path::simplifyPath(suppression.fileName);
+        } else {
+            throw std::runtime_error("filename is missing");
         }
     }
 
-    suppression.fileName = Path::simplifyPath(suppression.fileName);
+    // TODO: make this optional - do we even encounter this in production code?
+    // when parsing string generated internally by toString() there can be newline
+    for (std::size_t i = 1; i < parts.size(); ++i) {
+        if (startsWith(parts[i], "symbol="))
+            suppression.symbolName = parts[i].substr(7);
+        else if (parts[i] == "polyspace=1")
+            suppression.isPolyspace = true;
+        else
+            throw std::runtime_error("unexpected extra '" + parts[i] + "'");
+    }
 
     return suppression;
 }
 
 std::string SuppressionList::addSuppressionLine(const std::string &line)
 {
-    return addSuppression(parseLine(line));
+    try {
+        return addSuppression(parseLine(line));
+    } catch (const std::exception& e) {
+        return e.what();
+    }
 }
 
 std::string SuppressionList::addSuppression(SuppressionList::Suppression suppression)
@@ -332,20 +398,11 @@ bool SuppressionList::Suppression::parseComment(std::string comment, std::string
     if (comment.compare(comment.size() - 2, 2, "*/") == 0)
         comment.erase(comment.size() - 2, 2);
 
-    std::string::size_type extraPos = comment.find(';');
-    std::string::size_type extraDelimiterSize = 1;
+    std::string::size_type extraPos;
+    extraComment = getExtraComment(comment, 2, &extraPos);
 
-    if (extraPos == std::string::npos) {
-        extraPos = comment.find("//", 2);
-        extraDelimiterSize = 2;
-    }
-
-    if (extraPos != std::string::npos) {
-        extraComment = trim(comment.substr(extraPos + extraDelimiterSize));
-        for (auto it = extraComment.begin(); it != extraComment.end();)
-            it = *it & 0x80 ? extraComment.erase(it) : it + 1;
+    if (!extraComment.empty())
         comment.erase(extraPos);
-    }
 
     const std::set<std::string> cppchecksuppress{
         "cppcheck-suppress",
@@ -395,7 +452,7 @@ SuppressionList::Suppression::Result SuppressionList::Suppression::isSuppressed(
             if (!thisAndNextLine || lineNumber + 1 != errmsg.lineNumber)
                 return Result::None;
         }
-        if (!fileName.empty() && !PathMatch::match(fileName, errmsg.getFileName()))
+        if (!fileName.empty() && !isFileNameMatch(errmsg.getFileName()))
             return Result::None;
         if (hash > 0 && hash != errmsg.hash)
             return Result::Checked;
@@ -428,6 +485,21 @@ SuppressionList::Suppression::Result SuppressionList::Suppression::isSuppressed(
     return Result::Matched;
 }
 
+bool SuppressionList::Suppression::isFileNameMatch(const std::string &errorFileName) const
+{
+    const auto it = mFileNameMatchCache.find(errorFileName);
+    if (it != mFileNameMatchCache.end())
+        return it->second;
+
+    const bool result = PathMatch::match(fileName, errorFileName);
+
+    if (mFileNameMatchCache.size() >= mFileNameMatchCacheMaxEntries)
+        mFileNameMatchCache.clear();
+
+    mFileNameMatchCache.emplace(errorFileName, result);
+    return result;
+}
+
 bool SuppressionList::Suppression::isMatch(const SuppressionList::ErrorMessage &errmsg)
 {
     switch (isSuppressed(errmsg)) {
@@ -448,6 +520,7 @@ bool SuppressionList::isSuppressed(const SuppressionList::ErrorMessage &errmsg, 
 {
     std::lock_guard<std::mutex> lg(mSuppressionsSync);
 
+    // TODO: handle unmatchedPolyspaceSuppression?
     const bool unmatchedSuppression(errmsg.errorId == "unmatchedSuppression");
     bool returnValue = false;
     for (Suppression &s : mSuppressions) {
@@ -603,25 +676,25 @@ std::list<SuppressionList::Suppression> SuppressionList::getSuppressions() const
     return mSuppressions;
 }
 
-void SuppressionList::markUnmatchedInlineSuppressionsAsChecked(const Tokenizer &tokenizer) {
+void SuppressionList::markUnmatchedInlineSuppressionsAsChecked(const TokenList &tokenlist) {
     std::lock_guard<std::mutex> lg(mSuppressionsSync);
 
     int currLineNr = -1;
     int currFileIdx = -1;
-    for (const Token *tok = tokenizer.tokens(); tok; tok = tok->next()) {
+    for (const Token *tok = tokenlist.front(); tok; tok = tok->next()) {
         if (currFileIdx != tok->fileIndex() || currLineNr != tok->linenr()) {
             currLineNr = tok->linenr();
             currFileIdx = tok->fileIndex();
             for (auto &suppression : mSuppressions) {
                 if (suppression.type == SuppressionList::Type::unique) {
-                    if (!suppression.checked && (suppression.lineNumber == currLineNr) && (suppression.fileName == tokenizer.list.file(tok))) {
+                    if (!suppression.checked && (suppression.lineNumber == currLineNr) && (suppression.fileName == tokenlist.file(tok))) {
                         suppression.checked = true;
                     }
                 } else if (suppression.type == SuppressionList::Type::block) {
-                    if ((!suppression.checked && (suppression.lineBegin <= currLineNr) && (suppression.lineEnd >= currLineNr) && (suppression.fileName == tokenizer.list.file(tok)))) {
+                    if ((!suppression.checked && (suppression.lineBegin <= currLineNr) && (suppression.lineEnd >= currLineNr) && (suppression.fileName == tokenlist.file(tok)))) {
                         suppression.checked = true;
                     }
-                } else if (!suppression.checked && suppression.fileName == tokenizer.list.file(tok)) {
+                } else if (!suppression.checked && suppression.fileName == tokenlist.file(tok)) {
                     suppression.checked = true;
                 }
             }
@@ -632,7 +705,7 @@ void SuppressionList::markUnmatchedInlineSuppressionsAsChecked(const Tokenizer &
 std::string SuppressionList::Suppression::toString() const
 {
     std::string s;
-    s+= errorId;
+    s += errorId;
     if (!fileName.empty()) {
         s += ':';
         s += fileName;
@@ -641,9 +714,250 @@ std::string SuppressionList::Suppression::toString() const
             s += std::to_string(lineNumber);
         }
     }
-    if (!symbolName.empty()) {
-        s += ':';
-        s += symbolName;
-    }
+    if (!symbolName.empty())
+        s += "\nsymbol=" + symbolName;
+    if (isPolyspace)
+        s += "\npolyspace=1";
     return s;
+}
+
+polyspace::Parser::Parser(const Settings &settings)
+{
+    const bool haveMisraAddon = std::any_of(settings.addonInfos.cbegin(),
+                                            settings.addonInfos.cend(),
+                                            [] (const AddonInfo &info) {
+        return info.name == "misra";
+    });
+
+    if (haveMisraAddon) {
+        mFamilyMap["MISRA-C3"] = "misra-c2012-";
+        mFamilyMap["MISRA2012"] = "misra-c2012-";
+    }
+
+    const auto matchArg = [&](const std::string &arg) {
+        const std::string args = settings.premiumArgs;
+        const std::string::size_type pos = args.find(arg);
+
+        if (pos == std::string::npos)
+            return false;
+
+        const char prevChar = (pos > 0) ? args[pos - 1] : ' ';
+        const char nextChar = (pos + arg.size() < args.size()) ? args[pos + arg.size()] : ' ';
+
+        return prevChar == ' ' && (nextChar == ' ' || nextChar == ':');
+    };
+
+    if (matchArg("--misra-c-2012")) {
+        mFamilyMap["MISRA-C3"] = "premium-misra-c-2012-";
+        mFamilyMap["MISRA2012"] = "premium-misra-c-2012-";
+    }
+
+    if (matchArg("--misra-c-2023"))
+        mFamilyMap["MISRA-C-2023"] = "premium-misra-c-2023-";
+
+    if (matchArg("--misra-cpp-2008") || matchArg("--misra-c++-2008"))
+        mFamilyMap["MISRA-CPP"] = "premium-misra-cpp-2008-";
+
+    if (matchArg("--misra-cpp-2023") || matchArg("--misra-c++-2023"))
+        mFamilyMap["MISRA-CPP-2023"] = "premium-misra-cpp-2023-";
+
+    if (matchArg("--cert-c") || matchArg("--cert-c-2016"))
+        mFamilyMap["CERT-C"] = "premium-cert-c-";
+
+    if (matchArg("--cert-cpp") || matchArg("--cert-c++") ||
+        matchArg("--cert-cpp-2016") || matchArg("--cert-c++-2016"))
+        mFamilyMap["CERT-CPP"] = "premium-cert-cpp-";
+
+    if (matchArg("--autosar"))
+        mFamilyMap["AUTOSAR-CPP14"] = "premium-autosar-";
+}
+
+polyspace::CommentKind polyspace::Parser::parseKind(const std::string& comment, std::string::size_type& pos)
+{
+    const std::string::size_type pos1 = pos;
+    pos = comment.find_first_of(" \t", pos);
+    if (pos >= comment.size())
+        return CommentKind::Invalid;
+
+    const std::string token = comment.substr(pos1, pos-pos1);
+
+    if (token == "polyspace")
+        return CommentKind::Regular;
+
+    if (token == "polyspace-begin")
+        return CommentKind::Begin;
+
+    if (token == "polyspace-end")
+        return CommentKind::End;
+
+    return CommentKind::Invalid;
+}
+
+
+std::list<SuppressionList::Suppression> polyspace::Parser::parse(const std::string &comment, int line, const std::string &filename) const
+{
+    // Syntax for a polyspace suppression:
+    // https://se.mathworks.com/help/bugfinder/ug/annotate-hide-known-acceptable-polyspace-results-web-browser.html
+
+    std::list<SuppressionList::Suppression> ret;
+
+    if (mFamilyMap.empty())
+        return ret;
+
+    for (std::string::size_type pos = comment.find_first_not_of("/* "); pos < comment.size();) {
+        // polyspace
+        const auto polyspaceKind = parseKind(comment, pos);
+        if (polyspaceKind == CommentKind::Invalid)
+            break;
+
+        // optional range
+        const int rangeValue = parseRange(comment, pos);
+
+        // ids..
+        const std::set<std::string> ids = parseIds(comment, pos);
+
+        // skip justification
+        if (pos < comment.size() && comment[pos] == '[') {
+            pos = comment.find(']',pos+1);
+            if (pos >= comment.size())
+                break;
+            pos = comment.find_first_not_of(" \t", pos+1);
+            if (pos >= comment.size())
+                break;
+        }
+
+        // extra comment
+        std::string extraComment;
+        if (pos < comment.size() && comment[pos] == '\"') {
+            const std::string::size_type p1 = pos + 1;
+            pos = comment.find('\"',p1);
+            if (pos >= comment.size())
+                break;
+            extraComment = comment.substr(p1, pos-p1);
+        }
+
+        for (const std::string& errorId: ids) {
+            SuppressionList::Suppression suppr;
+            suppr.errorId = errorId;
+            suppr.isInline = true;
+            suppr.isPolyspace = true;
+            suppr.fileName = filename;
+            suppr.lineNumber = line;
+            suppr.extraComment = extraComment;
+
+            if (rangeValue > 0) {
+                suppr.type = SuppressionList::Type::block;
+                suppr.lineBegin = line;
+                suppr.lineEnd = line + rangeValue;
+            }
+            else if (polyspaceKind == polyspace::CommentKind::Regular)
+                suppr.type = SuppressionList::Type::unique;
+            else if (polyspaceKind == polyspace::CommentKind::Begin)
+                suppr.type = SuppressionList::Type::blockBegin;
+            else
+                suppr.type = SuppressionList::Type::blockEnd;
+
+            ret.emplace_back(suppr);
+        }
+
+        // proceed to next "polyspace" if it exists
+        if (pos < comment.size())
+            pos = comment.find("polyspace", pos);
+    }
+
+    return ret;
+}
+
+
+int polyspace::Parser::parseRange(const std::string& comment, std::string::size_type& pos) {
+    pos = comment.find_first_not_of(" \t", pos);
+    if (pos >= comment.size())
+        return 0;
+    if (comment[pos] != '+')
+        return 0;
+    const std::string::size_type startpos = pos + 1;
+    std::string::size_type endpos = comment.find_first_of(" \t", startpos);
+    if (endpos > comment.size())
+        return 0;
+    const std::string range = comment.substr(startpos, endpos-startpos);
+    try {
+        int ret = std::stoi(range);
+        pos = endpos;
+        return ret;
+    } catch (const std::invalid_argument &) {}
+    return 0;
+}
+
+std::vector<std::pair<std::string, std::string>> polyspace::Parser::parseFamilyRules(const std::string& comment, std::string::size_type& pos) {
+    std::vector<std::pair<std::string, std::string>> fr;
+    std::string family;
+    std::string rule;
+    enum class State: uint8_t { family, colon, rule, rule_or_family } state = State::family;
+    const std::string::size_type endpos = startsWith(comment, "/*") ? comment.size() - 2 : comment.size();
+    for (; pos <= endpos; ++pos) {
+        const char c = comment[pos];
+        if (std::strchr("[\"", c))
+            break;
+        switch (state) {
+        case State::family:
+            if (std::isalnum(c) || std::strchr("-_.",c))
+                family += c;
+            else if (!family.empty() && std::strchr(" \t:",c))
+                state = State::colon;
+            break;
+        case State::colon:
+            if (!std::strchr(" \t:", c)) {
+                rule.clear();
+                --pos;
+                state = State::rule;
+            }
+            break;
+        case State::rule:
+            if (std::strchr(", \t",c)) {
+                if (!rule.empty()) {
+                    fr.emplace_back(family,rule);
+                    rule.clear();
+                    if (c != ',')
+                        state = State::rule_or_family;
+                }
+            }
+            else
+                rule += c;
+            break;
+        case State::rule_or_family:
+            rule.clear();
+            if (std::isalnum(c)) {
+                --pos;
+                family.clear();
+                state = State::family;
+            } else if (c == ',') {
+                --pos;
+                state = State::rule;
+            }
+            break;
+        }
+    }
+    if (!family.empty() && !rule.empty())
+        fr.emplace_back(family,rule);
+    return fr;
+}
+
+std::set<std::string> polyspace::Parser::parseIds(const std::string& comment, std::string::size_type& pos) const {
+    std::set<std::string> ids;
+    for (const auto& fr: parseFamilyRules(comment,pos)) {
+        const auto it = mFamilyMap.find(fr.first);
+        if (it != mFamilyMap.cend())
+            ids.emplace(it->second + fr.second);
+    }
+    return ids;
+}
+
+
+bool polyspace::isPolyspaceComment(const std::string &comment)
+{
+    const std::string polyspace = "polyspace";
+    const std::string::size_type pos = comment.find_first_not_of("/* ");
+    if (pos == std::string::npos)
+        return false;
+    return comment.compare(pos, polyspace.size(), polyspace, 0, polyspace.size()) == 0;
 }

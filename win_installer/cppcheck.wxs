@@ -107,6 +107,7 @@
               <File Id='lua.cfg' Name='lua.cfg' Source='$(var.CfgsDir)\lua.cfg' />
               <File Id='mfc.cfg' Name='mfc.cfg' Source='$(var.CfgsDir)\mfc.cfg' />
               <File Id='microsoft_atl.cfg' Name='microsoft_atl.cfg' Source='$(var.CfgsDir)\microsoft_atl.cfg' />
+              <File Id='microsoft_gsl.cfg' Name='microsoft_gsl.cfg' Source='$(var.CfgsDir)\microsoft_gsl.cfg' />
               <File Id='microsoft_sal.cfg' Name='microsoft_sal.cfg' Source='$(var.CfgsDir)\microsoft_sal.cfg' />
               <File Id='microsoft_unittest.cfg' Name='microsoft_unittest.cfg' Source='$(var.CfgsDir)\microsoft_unittest.cfg' />
               <File Id='motif.cfg' Name='motif.cfg' Source='$(var.CfgsDir)\motif.cfg' />
@@ -149,6 +150,8 @@
               <File Id='mips32.xml' Name='mips32.xml' Source='$(var.PtfsDir)\mips32.xml' />
               <File Id='cray_sv1.xml' Name='cray_sv1.xml' Source='$(var.PtfsDir)\cray_sv1.xml' />
               <File Id='msp430_eabi_large_datamodel.xml' Name='msp430_eabi_large_datamodel.xml' Source='$(var.PtfsDir)\msp430_eabi_large_datamodel.xml' />
+              <File Id='riscv32.xml' Name='riscv32.xml' Source='$(var.PtfsDir)\riscv32.xml' />
+              <File Id='riscv64.xml' Name='riscv64.xml' Source='$(var.PtfsDir)\riscv64.xml' />
             </Component>
           </Directory>
           <Directory Id='AddonsFolder' Name='addons'>

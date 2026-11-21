@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "config.h"
 #include "fixture.h"
 
 #ifdef HAS_THREADING_MODEL_FORK
@@ -50,7 +51,7 @@ public:
 
 private:
 #ifdef HAS_THREADING_MODEL_FORK
-    /*const*/ Settings settings = settingsBuilder().library("std.cfg").build();
+    /*const*/ Settings settings;
     bool useFS;
 
     std::string fprefix() const
@@ -63,7 +64,7 @@ private:
     struct CheckOptions
     {
         bool quiet = true;
-        ShowTime showtime = ShowTime::NONE;
+        Settings::ShowTime showtime = Settings::ShowTime::NONE;
         const char* plistOutput = nullptr;
         std::vector<std::string> filesList;
     };
@@ -103,6 +104,9 @@ private:
             s.plistOutput = opt.plistOutput;
         s.templateFormat = "{callstack}: ({severity}) {inconclusive:inconclusive: }{message}";
         Suppressions supprs;
+        std::unique_ptr<TimerResults> timerResults;
+        if (s.showtime != Settings::ShowTime::NONE)
+            timerResults.reset(new TimerResults);
 
         // NOLINTNEXTLINE(performance-unnecessary-value-param)
         auto executeFn = [](std::string,std::vector<std::string>,std::string,std::string&){
@@ -118,7 +122,7 @@ private:
         if (useFS)
             filelist.clear();
 
-        ProcessExecutor executor(filelist, fileSettings, s, supprs, *this, executeFn);
+        ProcessExecutor executor(filelist, fileSettings, s, supprs, *this, timerResults.get(), executeFn);
         ASSERT_EQUALS(result, executor.check());
     }
 #endif // HAS_THREADING_MODEL_FORK
@@ -136,9 +140,7 @@ private:
         TEST_CASE(one_error_less_files);
         TEST_CASE(one_error_several_files);
         TEST_CASE(showtime_top5_file);
-        TEST_CASE(showtime_top5_summary);
         TEST_CASE(showtime_file);
-        TEST_CASE(showtime_summary);
         TEST_CASE(showtime_file_total);
         TEST_CASE(suppress_error_library);
         TEST_CASE(unique_errors);
@@ -177,7 +179,7 @@ private:
               "void f()\n"
               "{\n"
               "  (void)(*((int*)0));\n"
-              "}", dinit(CheckOptions, $.showtime = ShowTime::SUMMARY));
+              "}", dinit(CheckOptions, $.showtime = Settings::ShowTime::SUMMARY));
         // we are not interested in the results - so just consume them
         ignore_errout();
     }
@@ -246,25 +248,10 @@ private:
         check(2, 2, 0,
               "int main() {}",
               dinit(CheckOptions,
-                    $.showtime = ShowTime::TOP5_FILE));
-        // for each file: top5 results + overall + empty line
+                    $.showtime = Settings::ShowTime::TOP5_FILE));
         const std::string output_s = GET_REDIRECT_OUTPUT;
-        // for each file: top5 results + overall + empty line
-        TODO_ASSERT_EQUALS(static_cast<long long>(5 + 1 + 1) * 2, 0, cppcheck::count_all_of(output_s, '\n'));
-    }
-
-    void showtime_top5_summary() {
-        REDIRECT;
-        check(2, 2, 0,
-              "int main() {}",
-              dinit(CheckOptions,
-                    $.showtime = ShowTime::TOP5_SUMMARY));
-        const std::string output_s = GET_REDIRECT_OUTPUT;
-        // once: top5 results + overall + empty line
-        TODO_ASSERT_EQUALS(5 + 1 + 1, 1, cppcheck::count_all_of(output_s, '\n'));
-        // should only report the top5 once
-        ASSERT(output_s.find("1 result(s)") == std::string::npos);
-        TODO_ASSERT(output_s.find("2 result(s)") != std::string::npos);
+        // for each file: top5 results + check time
+        TODO_ASSERT_EQUALS(static_cast<long long>(5 + 1) * 2, 0, cppcheck::count_all_of(output_s, '\n'));
     }
 
     void showtime_file() {
@@ -272,21 +259,9 @@ private:
         check(2, 2, 0,
               "int main() {}",
               dinit(CheckOptions,
-                    $.showtime = ShowTime::FILE));
+                    $.showtime = Settings::ShowTime::FILE));
         const std::string output_s = GET_REDIRECT_OUTPUT;
         TODO_ASSERT_EQUALS(2, 0, cppcheck::count_all_of(output_s, "Overall time:"));
-    }
-
-    void showtime_summary() {
-        REDIRECT; // should not cause TSAN failures as the showtime logging is synchronized
-        check(2, 2, 0,
-              "int main() {}",
-              dinit(CheckOptions,
-                    $.showtime = ShowTime::SUMMARY));
-        const std::string output_s = GET_REDIRECT_OUTPUT;
-        // should only report the actual summary once
-        ASSERT(output_s.find("1 result(s)") == std::string::npos);
-        TODO_ASSERT(output_s.find("2 result(s)") != std::string::npos);
     }
 
     void showtime_file_total() {
@@ -294,7 +269,7 @@ private:
         check(2, 2, 0,
               "int main() {}",
               dinit(CheckOptions,
-                    $.showtime = ShowTime::FILE_TOTAL));
+                    $.showtime = Settings::ShowTime::FILE_TOTAL));
         const std::string output_s = GET_REDIRECT_OUTPUT;
         TODO_ASSERT(output_s.find("Check time: " + fprefix() + "_1.c: ") != std::string::npos);
         TODO_ASSERT(output_s.find("Check time: " + fprefix() + "_2.c: ") != std::string::npos);

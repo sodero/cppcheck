@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@
 #include "showtypes.h"
 #include "suppressions.h"
 #include "threadhandler.h"
+#include "utils.h"
 #include "xmlreportv2.h"
 
 #include <algorithm>
@@ -49,9 +50,7 @@
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
-#include <QList>
 #include <QLocale>
-#include <QMap>
 #include <QMenu>
 #include <QMessageBox>
 #include <QModelIndex>
@@ -123,7 +122,11 @@ static QStringList getLabels() {
         QObject::tr("Rule"),
         QObject::tr("Since date"),
         QObject::tr("Tags"),
-        QObject::tr("CWE")};
+        "CWE"};
+}
+
+static Severity getSeverity(ReportType reportType, const ErrorItem& errorItem) {
+    return reportType == ReportType::normal ? errorItem.severity : getSeverityFromClassification(errorItem.classification);
 }
 
 ResultsTree::ResultsTree(QWidget * parent) :
@@ -160,6 +163,7 @@ void ResultsTree::setReportType(ReportType reportType) {
             QSharedPointer<ErrorItem>& errorItem = dynamic_cast<ResultItem*>(fileItem->child(j,0))->errorItem;
             errorItem->guideline = getGuideline(mReportType, mGuideline, errorItem->errorId, errorItem->severity);
             errorItem->classification = getClassification(mReportType, errorItem->guideline);
+            dynamic_cast<ResultItem*>(fileItem->child(j, COLUMN_FILE))->setIconFileName(severityToIcon(getSeverity(reportType, *errorItem)));
             fileItem->child(j, COLUMN_CERT_LEVEL)->setText(errorItem->classification);
             fileItem->child(j, COLUMN_CERT_RULE)->setText(errorItem->guideline);
             fileItem->child(j, COLUMN_MISRA_CLASSIFICATION)->setText(errorItem->classification);
@@ -239,6 +243,11 @@ bool ResultsTree::addErrorItem(const ErrorItem& errorItem)
     if (errorItem.errorPath.isEmpty())
         return false;
 
+    const QString s = errorItem.toString();
+    if (mErrorList.contains(s))
+        return false;
+    mErrorList.append(s);
+
     QSharedPointer<ErrorItem> errorItemPtr{new ErrorItem(errorItem)};
 
     if (mReportType != ReportType::normal) {
@@ -259,7 +268,7 @@ bool ResultsTree::addErrorItem(const ErrorItem& errorItem)
     ResultItem* stditem = addBacktraceFiles(fileItem,
                                             errorItemPtr,
                                             !showItem,
-                                            severityToIcon(errorItemPtr->severity),
+                                            severityToIcon(getSeverity(mReportType, *errorItemPtr)),
                                             ResultItem::Type::message,
                                             errorItemPtr->getMainLocIndex());
 
@@ -312,6 +321,7 @@ ResultItem *ResultsTree::addBacktraceFiles(ResultItem *parent,
     const int numberOfColumns = getLabels().size();
     QList<ResultItem*> columns(numberOfColumns);
     columns[COLUMN_FILE] = createFilenameItem(errorItem, type, errorPathIndex);
+    columns[COLUMN_FILE]->setIconFileName(icon);
     columns[COLUMN_LINE] = createLineNumberItem(loc.line, errorItem, type, errorPathIndex);
     columns[COLUMN_SEVERITY] = createNormalItem(itemSeverity, errorItem, type, errorPathIndex);
     columns[COLUMN_SUMMARY] = createNormalItem(text, errorItem, type, errorPathIndex);
@@ -334,10 +344,6 @@ ResultItem *ResultsTree::addBacktraceFiles(ResultItem *parent,
     parent->appendRow(list);
 
     setRowHidden(parent->rowCount() - 1, parent->index(), hide);
-
-    if (!icon.isEmpty()) {
-        list[COLUMN_FILE]->setIcon(QIcon(icon));
-    }
 
     return columns[COLUMN_FILE];
 }
@@ -370,9 +376,10 @@ QString ResultsTree::severityToTranslatedString(Severity severity)
         return tr("internal");
 
     case Severity::none:
-    default:
         return QString();
     }
+
+    cppcheck::unreachable();
 }
 
 ResultItem *ResultsTree::findFileItem(const QString &name) const
@@ -393,6 +400,8 @@ ResultItem *ResultsTree::findFileItem(const QString &name) const
 
 void ResultsTree::clear()
 {
+    mErrorList.clear();
+
     mModel->removeRows(0, mModel->rowCount());
 
     if (const ProjectFile *activeProject = ProjectFile::getActiveProject()) {
@@ -418,6 +427,7 @@ void ResultsTree::clear(const QString &filename)
 
         if (stripped == fileItem->text() ||
             filename == fileItem->errorItem->file0) {
+            mErrorList.removeAll(fileItem->errorItem->toString());
             mModel->removeRow(i);
             break;
         }
@@ -435,6 +445,7 @@ void ResultsTree::clearRecheckFile(const QString &filename)
         QString storedfile = fileItem->getErrorPathItem().file;
         storedfile = ((!mCheckPath.isEmpty() && storedfile.startsWith(mCheckPath)) ? storedfile.mid(mCheckPath.length() + 1) : storedfile);
         if (actualfile == storedfile) {
+            mErrorList.removeAll(fileItem->errorItem->toString());
             mModel->removeRow(i);
             break;
         }
@@ -702,7 +713,7 @@ void ResultsTree::contextMenuEvent(QContextMenuEvent * e)
                 {
                     auto *action = new QAction(tr("No tag"), tagMenu);
                     tagMenu->addAction(action);
-                    connect(action, &QAction::triggered, [=]() {
+                    connect(action, &QAction::triggered, [this]() {
                         tagSelectedItems(QString());
                     });
                 }
@@ -710,7 +721,7 @@ void ResultsTree::contextMenuEvent(QContextMenuEvent * e)
                 for (const QString& tagstr : currentProject->getTags()) {
                     auto *action = new QAction(tagstr, tagMenu);
                     tagMenu->addAction(action);
-                    connect(action, &QAction::triggered, [=]() {
+                    connect(action, &QAction::triggered, [tagstr, this]() {
                         tagSelectedItems(tagstr);
                     });
                 }
@@ -730,7 +741,7 @@ void ResultsTree::startApplication(const ResultItem *target, int application)
     //If there are no applications specified, tell the user about it
     if (mApplications->getApplicationCount() == 0) {
         QMessageBox msg(QMessageBox::Critical,
-                        tr("Cppcheck"),
+                        "Cppcheck",
                         tr("No editor application configured.\n\n"
                            "Configure the editor application for Cppcheck in preferences/Applications."),
                         QMessageBox::Ok,
@@ -744,7 +755,7 @@ void ResultsTree::startApplication(const ResultItem *target, int application)
 
     if (application == -1) {
         QMessageBox msg(QMessageBox::Critical,
-                        tr("Cppcheck"),
+                        "Cppcheck",
                         tr("No default editor application selected.\n\n"
                            "Please select the default editor application in preferences/Applications."),
                         QMessageBox::Ok,
@@ -805,10 +816,6 @@ void ResultsTree::startApplication(const ResultItem *target, int application)
             }
         }
 #endif // Q_OS_WIN
-
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-        const QString cmdLine = QString("%1 %2").arg(program).arg(params);
-#endif
 
         const bool success = QProcess::startDetached(program, QProcess::splitCommand(params));
         if (!success) {

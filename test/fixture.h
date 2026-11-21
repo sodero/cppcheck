@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,8 +32,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
-#include <list>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -42,6 +42,8 @@
 
 class options;
 class Tokenizer;
+class Timer;
+class TimerResultsIntf;
 
 class TestFixture : public ErrorLogger {
 private:
@@ -56,9 +58,11 @@ private:
 
 protected:
     std::string exename;
-    std::string testToRun;
+    std::set<std::string> testsToRun;
     bool quiet_tests{};
     bool dry_run{};
+    bool exclude_tests{};
+    TimerResultsIntf* timer_results{};
     bool mNewTemplate{};
 
     virtual void run() = 0;
@@ -130,21 +134,13 @@ protected:
 
     void processOptions(const options& args);
 
-    template<typename T>
-    static T& getCheck()
+    static Check& getCheck(Check& check)
     {
-        for (Check *check : Check::instances()) {
-            //cppcheck-suppress useStlAlgorithm
-            if (T* c = dynamic_cast<T*>(check))
-                return *c;
-        }
-        throw std::runtime_error("instance not found");
+        return check;
     }
 
-    template<typename T>
-    static void runChecks(const Tokenizer &tokenizer, ErrorLogger *errorLogger)
+    static void runChecks(Check& check, const Tokenizer &tokenizer, ErrorLogger& errorLogger)
     {
-        Check& check = getCheck<T>();
         check.runChecks(tokenizer, errorLogger);
     }
 
@@ -284,19 +280,22 @@ private:
     std::ostringstream mOutput;
     std::ostringstream mErrout;
 
-    void reportOut(const std::string &outmsg, Color c = Color::Reset) override;
+    std::unique_ptr<Timer> mTimer;
+
+    void reportOut(const std::string &outmsg, Color /*c*/ = Color::Reset) override;
     void reportErr(const ErrorMessage &msg) override;
     void reportMetric(const std::string &metric) override
     {
         (void) metric;
     }
-    void run(const std::string &str);
+    void run(const std::set<std::string> &tests);
 
 public:
     static void printHelp();
     const std::string classname;
 
     explicit TestFixture(const char * _name);
+    ~TestFixture() override;
 
     static std::size_t runTests(const options& args);
 };
@@ -331,8 +330,7 @@ protected:
 #define ASSERT_EQUALS_ENUM_LOC( EXPECTED, ACTUAL, FILE_, LINE_ ) assertEqualsEnum(FILE_, LINE_, (EXPECTED), (ACTUAL))
 #define ASSERT_EQUALS_ENUM_LOC_MSG( EXPECTED, ACTUAL, MSG, FILE_, LINE_ ) assertEqualsEnum(FILE_, LINE_, (EXPECTED), (ACTUAL), MSG)
 #define TODO_ASSERT_EQUALS_ENUM( WANTED, CURRENT, ACTUAL ) todoAssertEqualsEnum(__FILE__, __LINE__, WANTED, CURRENT, ACTUAL)
-#define ASSERT_THROW_EQUALS( CMD, EXCEPTION, EXPECTED ) do { try { (void)(CMD); assertThrowFail(__FILE__, __LINE__); } catch (const EXCEPTION&e) { assertEquals(__FILE__, __LINE__, EXPECTED, e.errorMessage); } catch (...) { assertThrowFail(__FILE__, __LINE__); } } while (false)
-#define ASSERT_THROW_EQUALS_2( CMD, EXCEPTION, EXPECTED ) do { try { (void)(CMD); assertThrowFail(__FILE__, __LINE__); } catch (const AssertFailedError&) { throw; } catch (const EXCEPTION&e) { assertEquals(__FILE__, __LINE__, EXPECTED, e.what()); } catch (...) { assertThrowFail(__FILE__, __LINE__); } } while (false)
+#define ASSERT_THROW_EQUALS( CMD, EXCEPTION, EXPECTED ) do { try { (void)(CMD); assertThrowFail(__FILE__, __LINE__); } catch (const AssertFailedError&) { throw; } catch (const EXCEPTION&e) { assertEquals(__FILE__, __LINE__, EXPECTED, e.what()); } catch (...) { assertThrowFail(__FILE__, __LINE__); } } while (false)
 #define ASSERT_THROW_INTERNAL( CMD, TYPE ) do { try { (void)(CMD); assertThrowFail(__FILE__, __LINE__); } catch (const AssertFailedError&) { throw; } catch (const InternalError& e) { assertEqualsEnum(__FILE__, __LINE__, InternalError::TYPE, e.type); } catch (...) { assertThrowFail(__FILE__, __LINE__); } } while (false)
 #define ASSERT_THROW_INTERNAL_EQUALS( CMD, TYPE, EXPECTED ) do { try { (void)(CMD); assertThrowFail(__FILE__, __LINE__); } catch (const AssertFailedError&) { throw; } catch (const InternalError& e) { assertEqualsEnum(__FILE__, __LINE__, InternalError::TYPE, e.type); assertEquals(__FILE__, __LINE__, EXPECTED, e.errorMessage); } catch (...) { assertThrowFail(__FILE__, __LINE__); } } while (false)
 #define ASSERT_NO_THROW( CMD ) do { try { (void)(CMD); } catch (const AssertFailedError&) { throw; } catch (...) { assertNoThrowFail(__FILE__, __LINE__, true); } } while (false)

@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,8 +25,6 @@
 #include "errortypes.h"
 #include "mathlib.h"
 
-#include <cstdint>
-#include <cstdlib>
 #include <functional>
 #include <list>
 #include <string>
@@ -39,7 +37,6 @@ class SymbolDatabase;
 class TimerResultsIntf;
 class Token;
 class TokenList;
-class ValueType;
 class Variable;
 class Scope;
 
@@ -60,16 +57,6 @@ namespace ValueFlow {
                    TimerResultsIntf* timerResults);
 
     std::string eitherTheConditionIsRedundant(const Token *condition);
-
-    enum class Accuracy : std::uint8_t {
-        ExactOrZero,
-        LowerBound,
-    };
-
-    size_t getSizeOf(const ValueType &vt,
-                     const Settings &settings,
-                     Accuracy accuracy,
-                     int maxRecursion = 0);
 
     const Value* findValue(const std::list<Value>& values,
                            const Settings& settings,

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -110,8 +110,11 @@ namespace {
         {
             if (Token::simpleMatch(tok->tokAt(-2), "} else {"))
                 tok = tok->linkAt(-2);
-            if (Token::simpleMatch(tok->previous(), ") {"))
+            if (Token::simpleMatch(tok->previous(), ") {")) {
+                if (Token::simpleMatch(tok->linkAt(-1)->astOperand2(), ";"))
+                    return tok->linkAt(-1)->astOperand2();
                 return tok->linkAt(-1);
+            }
             if (Token::simpleMatch(tok->previous(), "do {"))
                 return tok->previous();
             return tok;
@@ -195,10 +198,13 @@ namespace {
             return nullptr;
         }
 
+        /**
+         * @throws InternalError thrown on cyclic analysis
+         */
         void traverse(Token* start, const Token* end = nullptr) {
             if (start == end)
                 return;
-            std::size_t i = start->index();
+            nonneg int i = start->index();
             for (Token* tok = start->previous(); succeeds(tok, end); tok = tok->previous()) {
                 if (tok->index() >= i)
                     throw InternalError(tok, "Cyclic reverse analysis.");
@@ -229,7 +235,7 @@ namespace {
                         if (!Token::Match(assignTop->astOperand1(), "%assign%")) {
                             continueB &= updateRecursive(assignTop->astOperand1());
                         }
-                        if (!assignTop->astParent())
+                        if (!assignTop->astParent() || Token::simpleMatch(assignTop->astParent(), ";"))
                             break;
                         assignTop = assignTop->astParent();
                     }
@@ -295,12 +301,12 @@ namespace {
                     if (!condTok)
                         break;
                     Analyzer::Action condAction = analyzeRecursive(condTok);
+                    if (condAction.isModified())
+                        break;
                     const bool inLoop = Token::Match(condTok->astTop()->previous(), "for|while (");
                     // Evaluate condition of for and while loops first
                     if (inLoop) {
                         if (Token::findmatch(tok->link(), "goto|break", tok))
-                            break;
-                        if (condAction.isModified())
                             break;
                         valueFlowGenericForward(condTok, analyzer, tokenlist, errorLogger, settings);
                     }
@@ -333,9 +339,6 @@ namespace {
                     if (!thenAction.isModified() && !elseAction.isModified())
                         valueFlowGenericForward(condTok, analyzer, tokenlist, errorLogger, settings);
                     else if (condAction.isRead())
-                        break;
-                    // If the condition modifies the variable then bail
-                    if (condAction.isModified())
                         break;
                     tok = jumpToStart(tok->link());
                     continue;

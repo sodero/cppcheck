@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -167,7 +167,7 @@ private:
         ASSERT_EQUALS("1", MathLib::calculate("0", "1", '^'));
 
         // Unknown action should throw exception
-        ASSERT_THROW_INTERNAL_EQUALS(MathLib::calculate("1","2",'j'),INTERNAL, "Unexpected action 'j' in MathLib::calculate(). Please report this to Cppcheck developers.");
+        ASSERT_THROW_INTERNAL_EQUALS(MathLib::calculate("1","2",'j'),INTERNAL, "Unexpected action 'j' in MathLib::calculate().");
     }
 
     void calculate1() const {
@@ -416,6 +416,8 @@ private:
             TokenList::deleteTokens(tok);
         }
 
+        ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigNumber("''"), INTERNAL, "Internal Error. MathLib::toBigNumber: characterLiteralToLL('') => empty character literal");
+
         // TODO: test binary
         // TODO: test floating point
 
@@ -588,6 +590,8 @@ private:
             TokenList::deleteTokens(tok);
         }
 
+        ASSERT_THROW_INTERNAL_EQUALS(MathLib::toBigUNumber("''"), INTERNAL, "Internal Error. MathLib::toBigUNumber: characterLiteralToLL('') => empty character literal");
+
         // TODO: test binary
         // TODO: test floating point
 
@@ -736,6 +740,8 @@ private:
         ASSERT_EQUALS("0.0",  MathLib::toString(MathLib::toDoubleNumber("-0")));
         ASSERT_EQUALS("0.0",  MathLib::toString(MathLib::toDoubleNumber("-0.")));
         ASSERT_EQUALS("0.0",  MathLib::toString(MathLib::toDoubleNumber("-0.0")));
+
+        ASSERT_THROW_INTERNAL_EQUALS(MathLib::toDoubleNumber("''"), INTERNAL, "Internal Error. MathLib::toDoubleNumber: characterLiteralToLL('') => empty character literal");
     }
 
     void isint() const {

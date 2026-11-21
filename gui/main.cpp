@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -124,7 +124,7 @@ static void ShowUsage()
 
 static void ShowVersion()
 {
-// TODO: should only *not* show a dialog when we are on a commnd-line
+// TODO: should only *not* show a dialog when we are on a command-line
 #if defined(_WIN32)
     AboutDialog *dlg = new AboutDialog(CppCheck::version(), CppCheck::extraVersion(), 0);
     dlg->exec();

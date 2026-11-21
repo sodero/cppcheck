@@ -9,6 +9,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <iosfwd>
 #include <list>
 #include <map>
@@ -41,10 +42,6 @@
 #  define SIMPLECPP_LIB
 #endif
 
-#ifndef _WIN32
-#  include <sys/types.h>
-#endif
-
 #if defined(_MSC_VER)
 #  pragma warning(push)
 // suppress warnings about "conversion from 'type1' to 'type2', possible loss of data"
@@ -57,8 +54,19 @@
 #ifndef SIMPLECPP_TOKENLIST_ALLOW_PTR
 // still provide the legacy API in case we lack the performant wrappers
 #  if !defined(__cpp_lib_string_view) && !defined(__cpp_lib_span)
-#    define SIMPLECPP_TOKENLIST_ALLOW_PTR
+#    define SIMPLECPP_TOKENLIST_ALLOW_PTR 1
+#  else
+#    define SIMPLECPP_TOKENLIST_ALLOW_PTR 0
 #  endif
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ <= 9
+// Hack to workaround GCC bug.
+// Details: https://trac.cppcheck.net/ticket/14850
+// seen on g++ before 10.x
+#define  SIMPLECPP_NOEXCEPT
+#else
+#define  SIMPLECPP_NOEXCEPT  noexcept
 #endif
 
 namespace simplecpp {
@@ -69,25 +77,61 @@ namespace simplecpp {
     enum cppstd_t : std::int8_t { CPPUnknown=-1, CPP03, CPP11, CPP14, CPP17, CPP20, CPP23, CPP26 };
 
     using TokenString = std::string;
+
+#if defined(__cpp_lib_string_view) && !defined(__cpp_lib_span)
+    using View = std::string_view;
+#else
+    struct View
+    {
+        // cppcheck-suppress noExplicitConstructor
+        View(const char* data)
+            : mData(data)
+            , mSize(strlen(data))
+        {}
+
+        // only provide when std::span is not available so using untyped initialization won't use View
+#if !defined(__cpp_lib_span)
+        View(const char* data, std::size_t size)
+            : mData(data)
+            , mSize(size)
+        {}
+
+        // cppcheck-suppress noExplicitConstructor
+        View(const std::string& str)
+            : mData(str.data())
+            , mSize(str.size())
+        {}
+#endif // !defined(__cpp_lib_span)
+
+        const char* data() const {
+            return mData;
+        }
+
+        std::size_t size() const {
+            return mSize;
+        }
+
+    private:
+        const char* mData;
+        std::size_t mSize;
+    };
+#endif // defined(__cpp_lib_string_view) && !defined(__cpp_lib_span)
+
     class Macro;
 
     /**
      * Location in source code
      */
-    class SIMPLECPP_LIB Location {
-    public:
-        explicit Location(const std::vector<std::string> &f) : files(f) {}
+    struct SIMPLECPP_LIB Location {
+        Location() = default;
+        Location(unsigned int fileIndex, unsigned int line, unsigned int col)
+            : fileIndex(fileIndex)
+            , line(line)
+            , col(col)
+        {}
 
         Location(const Location &loc) = default;
-
-        Location &operator=(const Location &other) {
-            if (this != &other) {
-                fileIndex = other.fileIndex;
-                line = other.line;
-                col  = other.col;
-            }
-            return *this;
-        }
+        Location &operator=(const Location &other) = default;
 
         /** increment this location by string */
         void adjust(const std::string &str);
@@ -104,16 +148,9 @@ namespace simplecpp {
             return fileIndex == other.fileIndex && line == other.line;
         }
 
-        const std::string& file() const {
-            return fileIndex < files.size() ? files[fileIndex] : emptyFileName;
-        }
-
-        const std::vector<std::string> &files;
         unsigned int fileIndex{};
-        unsigned int line{1};
+        unsigned int line{};
         unsigned int col{};
-    private:
-        static const std::string emptyFileName;
     };
 
     /**
@@ -143,9 +180,9 @@ namespace simplecpp {
         bool isOneOf(const char ops[]) const;
         bool startsWithOneOf(const char c[]) const;
         bool endsWithOneOf(const char c[]) const;
-        static bool isNumberLike(const std::string& str) {
-            return std::isdigit(static_cast<unsigned char>(str[0])) ||
-                   (str.size() > 1U && (str[0] == '-' || str[0] == '+') && std::isdigit(static_cast<unsigned char>(str[1])));
+        static bool isNumberLike(const std::string& s) {
+            return std::isdigit(static_cast<unsigned char>(s[0])) ||
+                   (s.size() > 1U && (s[0] == '-' || s[0] == '+') && std::isdigit(static_cast<unsigned char>(s[1])));
         }
 
         TokenString macro;
@@ -182,6 +219,9 @@ namespace simplecpp {
         bool isExpandedFrom(const Macro* m) const {
             return mExpandedFrom.find(m) != mExpandedFrom.end();
         }
+        void markExpandedFrom(const Macro* m) {
+            mExpandedFrom.insert(m);
+        }
 
         void printAll() const;
         void printOut() const;
@@ -207,7 +247,10 @@ namespace simplecpp {
             MISSING_HEADER,
             INCLUDE_NESTED_TOO_DEEPLY,
             SYNTAX_ERROR,
+            DIRECTIVE_AS_MACRO_PARAMETER,
             PORTABILITY_BACKSLASH,
+            PORTABILITY_LINE_DIRECTIVE,
+            PORTABILITY_NO_EOF_NEWLINE,
             UNHANDLED_CHAR_ERROR,
             EXPLICIT_INCLUDE_NOT_FOUND,
             FILE_NOT_FOUND,
@@ -220,6 +263,21 @@ namespace simplecpp {
 
     using OutputList = std::list<Output>;
 
+    /**
+     * Command line preprocessor settings.
+     * On the command line these are configured by -D, -U, -I, --include, -std
+     */
+    struct SIMPLECPP_LIB DUI {
+        DUI() = default;
+        std::list<std::string> defines;
+        std::set<std::string> undefined;
+        std::list<std::string> includePaths;
+        std::list<std::string> includes;
+        std::string std;
+        bool clearIncludeCache{};
+        bool removeComments{}; /** remove comment tokens from included files */
+    };
+
     /** List of tokens. */
     class SIMPLECPP_LIB TokenList {
     public:
@@ -227,48 +285,45 @@ namespace simplecpp {
 
         explicit TokenList(std::vector<std::string> &filenames);
         /** generates a token list from the given std::istream parameter */
-        TokenList(std::istream &istr, std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr);
-#ifdef SIMPLECPP_TOKENLIST_ALLOW_PTR
+        TokenList(std::istream &istr, std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr);
         /** generates a token list from the given buffer */
         template<size_t size>
-        TokenList(const char (&data)[size], std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr)
-            : TokenList(reinterpret_cast<const unsigned char*>(data), size-1, filenames, filename, outputList, 0)
+        TokenList(const char (&data)[size], std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr)
+            : TokenList(reinterpret_cast<const unsigned char*>(data), size-1, filenames, filename, dui, outputList, 0)
         {}
         /** generates a token list from the given buffer */
         template<size_t size>
-        TokenList(const unsigned char (&data)[size], std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr)
-            : TokenList(data, size-1, filenames, filename, outputList, 0)
+        TokenList(const unsigned char (&data)[size], std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr)
+            : TokenList(data, size-1, filenames, filename, dui, outputList, 0)
         {}
-
+#if SIMPLECPP_TOKENLIST_ALLOW_PTR
         /** generates a token list from the given buffer */
-        TokenList(const unsigned char* data, std::size_t size, std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr)
-            : TokenList(data, size, filenames, filename, outputList, 0)
+        TokenList(const unsigned char* data, std::size_t size, std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr)
+            : TokenList(data, size, filenames, filename, dui, outputList, 0)
         {}
         /** generates a token list from the given buffer */
-        TokenList(const char* data, std::size_t size, std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr)
-            : TokenList(reinterpret_cast<const unsigned char*>(data), size, filenames, filename, outputList, 0)
+        TokenList(const char* data, std::size_t size, std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr)
+            : TokenList(reinterpret_cast<const unsigned char*>(data), size, filenames, filename, dui, outputList, 0)
         {}
-#endif
-#if defined(__cpp_lib_string_view) && !defined(__cpp_lib_span)
+#endif // SIMPLECPP_TOKENLIST_ALLOW_PTR
         /** generates a token list from the given buffer */
-        TokenList(std::string_view data, std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr)
-            : TokenList(reinterpret_cast<const unsigned char*>(data.data()), data.size(), filenames, filename, outputList, 0)
+        TokenList(View data, std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr)
+            : TokenList(reinterpret_cast<const unsigned char*>(data.data()), data.size(), filenames, filename, dui, outputList, 0)
         {}
-#endif
 #ifdef __cpp_lib_span
         /** generates a token list from the given buffer */
-        TokenList(std::span<const char> data, std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr)
-            : TokenList(reinterpret_cast<const unsigned char*>(data.data()), data.size(), filenames, filename, outputList, 0)
+        TokenList(std::span<const char> data, std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr)
+            : TokenList(reinterpret_cast<const unsigned char*>(data.data()), data.size(), filenames, filename, dui, outputList, 0)
         {}
 
         /** generates a token list from the given buffer */
-        TokenList(std::span<const unsigned char> data, std::vector<std::string> &filenames, const std::string &filename=std::string(), OutputList *outputList = nullptr)
-            : TokenList(data.data(), data.size(), filenames, filename, outputList, 0)
+        TokenList(std::span<const unsigned char> data, std::vector<std::string> &filenames, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr)
+            : TokenList(data.data(), data.size(), filenames, filename, dui, outputList, 0)
         {}
-#endif
+#endif // __cpp_lib_span
 
         /** generates a token list from the given filename parameter */
-        TokenList(const std::string &filename, std::vector<std::string> &filenames, OutputList *outputList = nullptr);
+        TokenList(const std::string &filename, std::vector<std::string> &filenames, const DUI &dui = {}, OutputList *outputList = nullptr);
         TokenList(const TokenList &other);
         TokenList(TokenList &&other);
         ~TokenList();
@@ -284,7 +339,11 @@ namespace simplecpp {
         void dump(bool linenrs = false) const;
         std::string stringify(bool linenrs = false) const;
 
-        void readfile(Stream &stream, const std::string &filename=std::string(), OutputList *outputList = nullptr);
+        void readfile(Stream &stream, const std::string &filename=std::string(), const DUI &dui = {}, OutputList *outputList = nullptr);
+        /**
+         * @throws std::overflow_error thrown on overflow or division by zero
+         * @throws std::runtime_error thrown on invalid expressions
+         */
         void constFold();
 
         void removeComments();
@@ -341,22 +400,30 @@ namespace simplecpp {
             return files;
         }
 
+        const std::string& file(const Location& loc) const;
+
     private:
-        TokenList(const unsigned char* data, std::size_t size, std::vector<std::string> &filenames, const std::string &filename, OutputList *outputList, int unused);
+        TokenList(const unsigned char* data, std::size_t size, std::vector<std::string> &filenames, const std::string &filename, const DUI &dui, OutputList *outputList, int /*unused*/);
 
         void combineOperators();
 
         void constFoldUnaryNotPosNeg(Token *tok);
+        /**
+         * @throws std::overflow_error thrown on overflow or division by zero
+         */
         void constFoldMulDivRem(Token *tok);
         void constFoldAddSub(Token *tok);
         void constFoldShift(Token *tok);
         void constFoldComparison(Token *tok);
         void constFoldBitwise(Token *tok);
         void constFoldLogicalOp(Token *tok);
-        void constFoldQuestionOp(Token **tok1);
+        /**
+         * @throws std::runtime_error thrown on invalid expressions
+         */
+        void constFoldQuestionOp(Token *&tok1);
 
         std::string readUntil(Stream &stream, const Location &location, char start, char end, OutputList *outputList);
-        void lineDirective(unsigned int fileIndex, unsigned int line, Location *location);
+        void lineDirective(unsigned int fileIndex_, unsigned int line, Location &location);
 
         const Token* lastLineTok(int maxsize=1000) const;
         const Token* isLastLinePreprocessor(int maxsize=1000) const;
@@ -370,7 +437,7 @@ namespace simplecpp {
 
     /** Tracking how macros are used */
     struct SIMPLECPP_LIB MacroUsage {
-        explicit MacroUsage(const std::vector<std::string> &f, bool macroValueKnown_) : macroLocation(f), useLocation(f), macroValueKnown(macroValueKnown_) {}
+        explicit MacroUsage(bool macroValueKnown_) : macroValueKnown(macroValueKnown_) {}
         std::string macroName;
         Location macroLocation;
         Location useLocation;
@@ -385,21 +452,6 @@ namespace simplecpp {
         long long result; // condition result
     };
 
-    /**
-     * Command line preprocessor settings.
-     * On the command line these are configured by -D, -U, -I, --include, -std
-     */
-    struct SIMPLECPP_LIB DUI {
-        DUI() = default;
-        std::list<std::string> defines;
-        std::set<std::string> undefined;
-        std::list<std::string> includePaths;
-        std::list<std::string> includes;
-        std::string std;
-        bool clearIncludeCache{};
-        bool removeComments{}; /** remove comment tokens from included files */
-    };
-
     struct SIMPLECPP_LIB FileData {
         /** The canonical filename associated with this data */
         std::string filename;
@@ -409,13 +461,14 @@ namespace simplecpp {
 
     class SIMPLECPP_LIB FileDataCache {
     public:
-        FileDataCache() = default;
+        FileDataCache();
+        ~FileDataCache();
 
         FileDataCache(const FileDataCache &) = delete;
-        FileDataCache(FileDataCache &&) = default;
+        FileDataCache(FileDataCache &&) SIMPLECPP_NOEXCEPT;
 
         FileDataCache &operator=(const FileDataCache &) = delete;
-        FileDataCache &operator=(FileDataCache &&) = default;
+        FileDataCache &operator=(FileDataCache &&) SIMPLECPP_NOEXCEPT;
 
         /** Get the cached data for a file, or load and then return it if it isn't cached.
          *  returns the file data and true if the file was loaded, false if it was cached. */
@@ -429,11 +482,7 @@ namespace simplecpp {
             mNameMap.emplace(newdata->filename, newdata);
         }
 
-        void clear() {
-            mNameMap.clear();
-            mIdMap.clear();
-            mData.clear();
-        }
+        void clear();
 
         using container_type = std::vector<std::unique_ptr<FileData>>;
         using iterator = container_type::iterator;
@@ -462,54 +511,54 @@ namespace simplecpp {
             return mData.cend();
         }
 
+        using load_callback_type = std::function<void (FileData &, bool)>;
+
+        void set_load_callback(load_callback_type cb) {
+            mLoadCallback = std::move(cb);
+        }
+
     private:
-        struct FileID {
-#ifdef _WIN32
-            struct {
-                std::uint64_t VolumeSerialNumber;
-                struct {
-                    std::uint64_t IdentifierHi;
-                    std::uint64_t IdentifierLo;
-                } FileId;
-            } fileIdInfo;
-
-            bool operator==(const FileID &that) const noexcept {
-                return fileIdInfo.VolumeSerialNumber == that.fileIdInfo.VolumeSerialNumber &&
-                       fileIdInfo.FileId.IdentifierHi == that.fileIdInfo.FileId.IdentifierHi &&
-                       fileIdInfo.FileId.IdentifierLo == that.fileIdInfo.FileId.IdentifierLo;
-            }
-#else
-            dev_t dev;
-            ino_t ino;
-
-            bool operator==(const FileID& that) const noexcept {
-                return dev == that.dev && ino == that.ino;
-            }
-#endif
-            struct Hasher {
-                std::size_t operator()(const FileID &id) const {
-#ifdef _WIN32
-                    return static_cast<std::size_t>(id.fileIdInfo.FileId.IdentifierHi ^ id.fileIdInfo.FileId.IdentifierLo ^
-                                                    id.fileIdInfo.VolumeSerialNumber);
-#else
-                    return static_cast<std::size_t>(id.dev) ^ static_cast<std::size_t>(id.ino);
-#endif
-                }
-            };
-        };
+        struct Impl;
+        std::unique_ptr<Impl> mImpl;
 
         using name_map_type = std::unordered_map<std::string, FileData *>;
-        using id_map_type = std::unordered_map<FileID, FileData *, FileID::Hasher>;
-
-        static bool getFileId(const std::string &path, FileID &id);
 
         std::pair<FileData *, bool> tryload(name_map_type::iterator &name_it, const DUI &dui, std::vector<std::string> &filenames, OutputList *outputList);
+        std::pair<FileData *, bool> get_private(const std::string &sourcefile, const std::string &header, const DUI &dui, bool systemheader, std::vector<std::string> &filenames, OutputList *outputList);
 
         container_type mData;
         name_map_type mNameMap;
-        id_map_type mIdMap;
+        load_callback_type mLoadCallback;
     };
 
+    /** Converts character literal (including prefix, but not ud-suffix) to long long value.
+     *
+     * Assumes ASCII-compatible single-byte encoded str for narrow literals
+     * and UTF-8 otherwise.
+     *
+     * For target assumes
+     * - execution character set encoding matching str
+     * - UTF-32 execution wide-character set encoding
+     * - requirements for __STDC_UTF_16__, __STDC_UTF_32__ and __STDC_ISO_10646__ satisfied
+     * - char16_t is 16bit wide
+     * - char32_t is 32bit wide
+     * - wchar_t is 32bit wide and unsigned
+     * - matching char signedness to host
+     * - matching sizeof(int) to host
+     *
+     * For host assumes
+     * - ASCII-compatible execution character set
+     *
+     * For host and target assumes
+     * - CHAR_BIT == 8
+     * - two's complement
+     *
+     * Implements multi-character narrow literals according to GCC's behavior,
+     * except multi code unit universal character names are not supported.
+     * Multi-character wide literals are not supported.
+     * Limited support of universal character names for non-UTF-8 execution character set encodings.
+     * @throws std::runtime_error thrown on invalid literal
+     */
     SIMPLECPP_LIB long long characterLiteralToLL(const std::string& str);
 
     SIMPLECPP_LIB FileDataCache load(const TokenList &rawtokens, std::vector<std::string> &filenames, const DUI &dui, OutputList *outputList = nullptr, FileDataCache cache = {});
@@ -542,8 +591,14 @@ namespace simplecpp {
     /** Returns the C version a given standard */
     SIMPLECPP_LIB cstd_t getCStd(const std::string &std);
 
+    /** Returns the name of a C standard */
+    SIMPLECPP_LIB const char *getCStdName(cstd_t std);
+
     /** Returns the C++ version a given standard */
     SIMPLECPP_LIB cppstd_t getCppStd(const std::string &std);
+
+    /** Returns the name of a C++ standard */
+    SIMPLECPP_LIB const char *getCppStdName(cppstd_t std);
 
     /** Returns the __STDC_VERSION__ value for a given standard */
     SIMPLECPP_LIB std::string getCStdString(const std::string &std);

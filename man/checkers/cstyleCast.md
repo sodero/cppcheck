@@ -1,4 +1,3 @@
-
 # cstyleCast
 
 **Message**: C-style pointer casting<br/>
@@ -23,7 +22,7 @@ This checker is about C casts that converts to/from a pointer or reference.
 Dangerous conversions are covered by other warnings so this ID `cstyleCast` is primarily about
 writing warnings for casts that are currently safe.
 
-# Motivation
+## Motivation
 
 The motivation of this checker is to modernize c++ code.
 
@@ -31,15 +30,15 @@ The motivation of this checker is to modernize c++ code.
 
 You can use C++ casts such as `static_cast` to fix these warnings.
 
-The `dynamic_cast` should rarelly be used to fix these warnings because dangerousTypeCast is
+The `dynamic_cast` should rarely be used to fix these warnings because dangerousTypeCast is
 reported when that can be a good idea.
 
 Before:
 ```cpp
 struct Base{};
 struct Derived: public Base {};
-void foo(Base* base) {
-    Base *p = (Base*)derived; // <- cstyleCast, cast from derived object to base object is safe now
+void foo(Derived* derived) {
+    Base *p = (Base*)derived; // <- cstyleCast: casting up to a base class is always safe
 }
 ```
 
@@ -47,8 +46,9 @@ After:
 ```cpp
 struct Base{};
 struct Derived: public Base {};
-void foo(Base* base) {
-    Derived *p = static_cast<Derived*>(base);
+void foo(Derived* derived) {
+    Base *p = static_cast<Base*>(derived);
 }
 ```
-The `static_cast` ensures that there will not be loss of constness in the future.
+The `static_cast` documents the intended direction of the cast and will fail to compile if the
+class hierarchy ever changes in a way that makes it invalid.

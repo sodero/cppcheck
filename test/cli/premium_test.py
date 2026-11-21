@@ -29,6 +29,7 @@ def __copy_cppcheck_premium(tmpdir):
                     "addons": [],
                     "productName": "NAME",
                     "about": "NAME",
+                    "manualUrl" : "https://files.cppchecksolutions.com/manual.pdf",
                     "safety": true
                 }
                 """.replace('NAME', __PRODUCT_NAME))
@@ -87,11 +88,11 @@ def test_build_dir_hash_cppcheck_product(tmpdir):
     assert exitcode == 0
 
     def _get_hash(s:str):
-        i = s.find(' hash="')
+        i = s.find('<hash>')
         if i <= -1:
             return ''
         i += 7
-        return s[i:s.find('"', i)]
+        return s[i:s.find('</hash>', i)]
 
     with open(build_dir.join('test.a1'), 'rt') as f:
         f1 = f.read()
@@ -164,6 +165,23 @@ def test_help(tmpdir):
     assert stdout.startswith('Cppcheck ')  # check for product name - TODO: should be "Cppcheck Premium"
     assert '--premium=' in stdout, stdout  # check for premium option
     assert 'cppchecksolutions.com' in stdout, stdout  # check for premium help link
+
+
+def test_cwe(tmpdir):
+    # Trac 14323 - addon warnings with cwe
+    test_file = os.path.join(tmpdir, 'test.c')
+    addon_file = os.path.join(tmpdir, 'premiumaddon.py')
+
+    with open(test_file, 'wt') as f:
+        f.write('void foo();\n')
+
+    args = [f"--addon={addon_file}", '--xml', test_file]
+
+    with open(addon_file, 'wt') as f:
+        f.write('print(\'{"addon":"a","column":1,"errorId":"id","extra":"","file":"test.c","cwe":123,"linenr":1,"message":"bug","severity":"error"}\')')
+
+    _, _, stderr = cppcheck(args)
+    assert '<error id="a-id" severity="error" msg="bug" verbose="bug" cwe="123" ' in stderr
 
 
 def test_hash(tmpdir):

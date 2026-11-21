@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,9 +21,7 @@
 #define settingsH
 //---------------------------------------------------------------------------
 
-#include "addoninfo.h"
 #include "config.h"
-#include "errortypes.h"
 #include "library.h"
 #include "platform.h"
 #include "standards.h"
@@ -45,16 +43,16 @@
 #endif
 
 #ifdef HAVE_RULES
-#include <memory>
-
-class Regex;
+struct Rule;
 #endif
-
 struct Suppressions;
-enum class ShowTime : std::uint8_t;
+struct AddonInfo;
 namespace ValueFlow {
     class Value;
 }
+enum class Severity : std::uint8_t;
+enum class Certainty : std::uint8_t;
+enum class Checks : std::uint8_t;
 
 /// @addtogroup Core
 /// @{
@@ -96,6 +94,16 @@ public:
 };
 
 
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ <= 9
+// Hack to workaround GCC bug.
+// Details: https://trac.cppcheck.net/ticket/14850
+// seen on g++ before 10.x
+#define  CPPCHECK_NOEXCEPT
+#else
+#define  CPPCHECK_NOEXCEPT  noexcept
+#endif
+
+
 /**
  * @brief This is just a container for general settings so that we don't need
  * to pass individual values to functions or constructors now or in the
@@ -110,6 +118,13 @@ private:
 
 public:
     Settings();
+    ~Settings();
+
+    Settings(const Settings&);
+    Settings& operator=(const Settings&);
+
+    Settings(Settings&&) CPPCHECK_NOEXCEPT;
+    Settings& operator=(Settings&&) CPPCHECK_NOEXCEPT;
 
     static std::string loadCppcheckCfg(Settings& settings, Suppressions& suppressions, bool debug = false);
 
@@ -189,6 +204,9 @@ public:
     /** @brief Are we running from DACA script? */
     bool daca{};
 
+    /** @brief Is --debug-analyzerinfo given? */
+    bool debugainfo{};
+
     /** @brief Is --debug-ast given? */
     bool debugast{};
 
@@ -197,6 +215,9 @@ public:
 
     /** @brief Is --debug-ignore given? */
     bool debugignore{};
+
+    /** @brief Is --debug-ipc given? */
+    bool debugipc{};
 
     /** @brief Internal: Is --debug-lookup or --debug-lookup=all given? */
     bool debuglookup{};
@@ -291,6 +312,8 @@ public:
     int loadAverage{};
 #endif
 
+    std::string manualUrl{"https://cppcheck.sourceforge.io/manual.pdf"};
+
     /** --max-configs value */
     int maxConfigsOption = 0; // "Not Assigned" value
 
@@ -349,6 +372,9 @@ public:
     /** @brief Using -E for debugging purposes */
     bool preprocessOnly{};
 
+    /** @brief Keep comments in preprocessed output */
+    bool keepComments{};
+
     /** @brief Is --quiet given? */
     bool quiet{};
 
@@ -359,16 +385,6 @@ public:
     int reportProgress{-1};
 
 #ifdef HAVE_RULES
-    /** Rule */
-    struct CPPCHECKLIB Rule {
-        std::string tokenlist = "normal"; // use normal tokenlist
-        std::string pattern;
-        std::string id = "rule"; // default id
-        std::string summary;
-        Severity severity = Severity::style; // default severity
-        std::shared_ptr<Regex> regex;
-    };
-
     /**
      * @brief Extra rules
      */
@@ -434,6 +450,15 @@ public:
     SimpleEnableGroup<Certainty> certainty;
     SimpleEnableGroup<Checks> checks;
 
+    enum class ShowTime : std::uint8_t {
+        NONE,
+        FILE,
+        FILE_TOTAL,
+        SUMMARY,
+        TOP5_SUMMARY,
+        TOP5_FILE
+    };
+
     /** @brief show timing information (--showtime=file|summary|top5) */
     ShowTime showtime{};
 
@@ -472,7 +497,7 @@ public:
         /** @brief the maximum iterations to execute */
         std::size_t maxIterations = 4;
 
-        /** @brief maximum numer if-branches */
+        /** @brief maximum number if-branches */
         int maxIfCount = -1;
 
         /** @brief maximum number of sets of arguments to pass to subfuncions */
@@ -489,6 +514,15 @@ public:
 
         /** @brief Maximum performed forward branches */
         int maxForwardBranches = -1;
+
+        /** @brief Maximum depth of nested condition-fork continuations in the forward analyzer.
+            Bounds the exponential fan-out of carrying condition state forward at exhaustive level (where
+            maxForwardBranches is unlimited); past it the forward analysis continues on a single linear path
+            without skipping any branch. 0 disables forking (linear); a negative value means unlimited. */
+        int maxForwardConditionForkDepth = 4;
+
+        /** @brief Maximum total condition-fork continuations in one forward traversal. */
+        int maxForwardConditionForks = 256;
 
         /** @brief Maximum performed alignof recursion */
         int maxAlignOfRecursion = 100;
@@ -576,6 +610,8 @@ public:
     static ExecutorType defaultExecutor();
 
     static bool unusedFunctionOnly();
+
+    bool collectLogCheckers(bool* summary = nullptr, bool* xmlReport = nullptr, bool* textReport = nullptr) const;
 
 private:
     static std::string parseEnabled(const std::string &str, std::tuple<SimpleEnableGroup<Severity>, SimpleEnableGroup<Checks>> &groups);

@@ -40,10 +40,6 @@ CheckOptions:
     if(WITH_QCHART)
         target_link_libraries(cppcheck-gui ${QT_CHARTS_LIB})
     endif()
-    if(MSVC)
-        # compilation will fail as e.g. QList::realloc would be replaced by MSVC's macro definition
-        target_compile_definitions(cppcheck-gui PRIVATE $<$<CONFIG:Debug>:DISABLE_CRTDBG_MAP_ALLOC>)
-    endif()
     if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         if(QT_VERSION VERSION_LESS "6.4.0")
             # caused by Qt generated moc code - see https://bugreports.qt.io/browse/QTBUG-100915
@@ -75,8 +71,8 @@ CheckOptions:
         add_dependencies(cppcheck-gui online-help.qhc)
     endif()
 
-    install(TARGETS cppcheck-gui RUNTIME DESTINATION ${CMAKE_INSTALL_FULL_BINDIR} COMPONENT applications)
-    install(FILES ${qms} DESTINATION ${CMAKE_INSTALL_FULL_BINDIR} COMPONENT applications)
+    install(TARGETS cppcheck-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT applications)
+    install(FILES ${qms} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT applications)
 
     install(FILES cppcheck-gui.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
@@ -91,7 +87,7 @@ CheckOptions:
         add_dependencies(cppcheck-gui run-dmake)
     endif()
 
-    if (BUILD_TESTS)
+    if (BUILD_TESTING)
         add_subdirectory(test)
     endif()
 endif()

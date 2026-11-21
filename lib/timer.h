@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,52 +23,38 @@
 #include "config.h"
 
 #include <chrono>
-#include <cstdint>
-#include <ctime>
-#include <functional>
+#include <cstddef>
+#include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
-
-enum class ShowTime : std::uint8_t {
-    NONE,
-    FILE,
-    FILE_TOTAL,
-    SUMMARY,
-    TOP5_SUMMARY,
-    TOP5_FILE
-};
+#include <vector>
 
 class CPPCHECKLIB TimerResultsIntf {
 public:
     virtual ~TimerResultsIntf() = default;
 
-    virtual void addResults(const std::string& timerName, std::chrono::milliseconds duation) = 0;
+    virtual void addResults(const std::string& name, std::chrono::milliseconds duration) = 0;
 };
 
-struct TimerResultsData {
-    std::chrono::milliseconds mDuration;
-    long mNumberOfResults{};
-
-    std::chrono::duration<double> getSeconds() const {
-        return std::chrono::duration_cast<std::chrono::duration<double>>(mDuration);
-    }
-
-    static std::string durationToString(std::chrono::milliseconds duration);
-};
-
-class CPPCHECKLIB TimerResults : public TimerResultsIntf {
+class CPPCHECKLIB WARN_UNUSED TimerResults : public TimerResultsIntf {
 public:
     TimerResults() = default;
 
-    void showResults(ShowTime mode) const;
-    void addResults(const std::string& str, std::chrono::milliseconds duration) override;
+    void showResults(size_t max_results = std::numeric_limits<size_t>::max(), bool metrics = true) const;
+    void addResults(const std::string& name, std::chrono::milliseconds duration) override;
 
     void reset();
 
-private:
-    std::map<std::string, TimerResultsData> mResults;
+    std::map<std::string, std::vector<std::chrono::milliseconds>> getResults() const {
+        std::lock_guard<std::mutex> l(mResultsSync);
+        return mResults;
+    }
+
+protected:
+    std::map<std::string, std::vector<std::chrono::milliseconds>> mResults;
     mutable std::mutex mResultsSync;
 };
 
@@ -77,13 +63,7 @@ public:
     using Clock = std::chrono::high_resolution_clock;
     using TimePoint = std::chrono::time_point<Clock>;
 
-    enum class Type : std::uint8_t {
-        FILE,
-        OVERALL,
-        OTHER
-    };
-
-    Timer(std::string str, ShowTime showtimeMode, TimerResultsIntf* timerResults = nullptr, Type type = Type::OTHER);
+    explicit Timer(std::string str, TimerResultsIntf* timerResults = nullptr);
     ~Timer();
 
     Timer(const Timer&) = delete;
@@ -91,17 +71,25 @@ public:
 
     void stop();
 
-    static void run(std::string str, ShowTime showtimeMode, TimerResultsIntf* timerResults, const std::function<void()>& f) {
-        Timer t(std::move(str), showtimeMode, timerResults);
+    template<class TFunc>
+    static void run(std::string str, TimerResultsIntf* timerResults, const TFunc& f) {
+        Timer t(std::move(str), timerResults);
         f();
     }
 
 private:
     const std::string mName;
-    ShowTime mMode{};
-    Type mType{};
     TimePoint mStart;
     TimerResultsIntf* mResults{};
+};
+
+class CPPCHECKLIB OneShotTimer
+{
+public:
+    explicit OneShotTimer(std::string name);
+private:
+    std::unique_ptr<TimerResultsIntf> mResults;
+    std::unique_ptr<Timer> mTimer;
 };
 
 //---------------------------------------------------------------------------

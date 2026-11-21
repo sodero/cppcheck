@@ -1,6 +1,6 @@
 /* -*- C++ -*-
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,11 +24,13 @@
 #include "config.h"
 #include "errortypes.h"
 
-#include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <list>
 #include <set>
+#include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 #include <map>
 
@@ -87,7 +89,7 @@ public:
         std::string stringify(bool addcolumn = false) const;
 
         unsigned int fileIndex;
-        int line; // negative value means "no line"
+        int line; // negative value means "no line" - TODO: actually 0 means no line - lines from simplecpp are unsigned
         unsigned int column;
 
         const std::string& getinfo() const {
@@ -150,13 +152,18 @@ public:
      * or template to be used. E.g. "{file}:{line},{severity},{id},{message}"
      * @param templateLocation Format Empty string to use default output format
      * or template to be used. E.g. "{file}:{line},{info}"
+     * @param noCode Always replace {code} with an empty string
      * @return formatted string
      */
     std::string toString(bool verbose,
                          const std::string &templateFormat,
-                         const std::string &templateLocation) const;
+                         const std::string &templateLocation,
+                         bool noCode = false) const;
 
     std::string serialize() const;
+    /**
+     * @throws InternalError thrown if deserialization failed
+     */
     void deserialize(const std::string &data);
 
     std::list<FileLocation> callStack;
@@ -203,6 +210,15 @@ public:
 
 private:
     static std::string fixInvalidChars(const std::string& raw);
+
+    void calculateWarningHash(const std::list<const Token*>& callstack);
+
+    /**
+     * Fallback hash calculation for warnings that have no token information
+     * (e.g. whole-program/CTU checks, unusedFunction, staticFunction). Hashes
+     * the id, message and all filenames/notes in the callstack instead.
+     */
+    void calculateWarningHashFromLocations();
 
     /** Short message */
     std::string mShortMessage;
@@ -267,12 +283,19 @@ public:
      */
     static std::string toxml(const std::string &str);
 
-    static std::string plistHeader(const std::string &version, const std::vector<std::string> &files);
+    static std::string plistHeader(const std::string &version);
     static std::string plistData(const ErrorMessage &msg);
-    static const char *plistFooter() {
-        return " </array>\r\n"
-               "</dict>\r\n"
-               "</plist>";
+    static std::string plistFooter(const std::vector<std::string>& files) {
+        std::ostringstream ostr;
+        ostr << " </array>\r\n"
+             << " <key>files</key>\r\n"
+             << " <array>\r\n";
+        for (const std::string& file : files)
+            ostr << "  <string>" << ErrorLogger::toxml(file) << "</string>\r\n";
+        ostr << " </array>\r\n"
+             << "</dict>\r\n"
+             << "</plist>";
+        return ostr.str();
     }
 
     static bool isCriticalErrorId(const std::string& id) {
@@ -281,6 +304,43 @@ public:
 
 private:
     static const std::set<std::string> mCriticalErrorIds;
+};
+
+/// RAII class for reporting progress messages
+class CPPCHECKLIB ProgressReporter {
+public:
+    ProgressReporter(ErrorLogger& e, int reportProgressInterval, std::string filename, std::string stage) :
+        mErrorLogger(e),
+        mReportProgressInterval(reportProgressInterval),
+        mFilename(std::move(filename)),
+        mStage(std::move(stage)) {
+        report(0);
+    }
+
+    ~ProgressReporter() {
+        if (mReportProgressInterval < 0)
+            return;
+        mErrorLogger.reportProgress(mFilename, mStage.c_str(), 100);
+    }
+
+    void report(int value) {
+        if (mReportProgressInterval < 0 || value == mLastValue)
+            return;
+        const std::time_t t = std::time(nullptr);
+        if (t >= mLastTime + mReportProgressInterval) {
+            mErrorLogger.reportProgress(mFilename, mStage.c_str(), value);
+            mLastTime = t;
+            mLastValue = value;
+        }
+    }
+
+private:
+    ErrorLogger& mErrorLogger;
+    const int mReportProgressInterval;
+    const std::string mFilename;
+    const std::string mStage;
+    std::time_t mLastTime{0};
+    int mLastValue{-1};
 };
 
 /** Replace substring. Example replaceStr("1,NR,3", "NR", "2") => "1,2,3" */
@@ -295,12 +355,12 @@ CPPCHECKLIB void substituteTemplateLocationStatic(std::string& templateLocation,
 /** Get a classification string from the given guideline and reporttype */
 CPPCHECKLIB std::string getClassification(const std::string &guideline, ReportType reportType);
 
-/** Get a guidline string froM the given error id, reporttype, mapping and severity */
+/** Get a guideline string froM the given error id, reporttype, mapping and severity */
 CPPCHECKLIB std::string getGuideline(const std::string &errId, ReportType reportType,
                                      const std::map<std::string, std::string> &guidelineMapping,
                                      Severity severity);
 
-/** Get a map from cppcheck error ids to guidlines matching the given report type */
+/** Get a map from cppcheck error ids to guidelines matching the given report type */
 CPPCHECKLIB std::map<std::string, std::string> createGuidelineMapping(ReportType reportType);
 
 /// @}

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 // the code for a known configuration, it generates the code for each configuration.
 
 #include "errortypes.h"
+#include "library.h"
 #include "path.h"
 #include "platform.h"
 #include "preprocessor.h"
@@ -31,7 +32,9 @@
 #include "fixture.h"
 #include "helpers.h"
 
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <list>
 #include <map>
 #include <set>
@@ -49,19 +52,21 @@ public:
     TestPreprocessor() : TestFixture("TestPreprocessor") {}
 
 private:
+    #define expandMacros(...) expandMacros_(__FILE__, __LINE__, __VA_ARGS__)
     template<size_t size>
-    std::string expandMacros(const char (&code)[size], ErrorLogger &errorLogger) const {
+    std::string expandMacros_(const char* file, int line, const char (&code)[size], ErrorLogger &errorLogger) const {
         simplecpp::OutputList outputList;
         std::vector<std::string> files;
-        simplecpp::TokenList tokens1 = simplecpp::TokenList(code, files, "file.cpp", &outputList);
+        simplecpp::TokenList tokens1 = simplecpp::TokenList(code, files, "file.cpp", {}, &outputList);
         Preprocessor p(tokens1, settingsDefault, errorLogger, Path::identify(tokens1.getFiles()[0], false));
-        simplecpp::TokenList tokens2 = p.preprocess("", files, true);
+        ASSERT_LOC(p.loadAllIncludes(files), file, line);
+        simplecpp::TokenList tokens2 = p.preprocess("", files, outputList);
         (void)p.reportOutput(outputList, true);
         return tokens2.stringify();
     }
 
     template<size_t size>
-    static void preprocess(const char (&code)[size], std::vector<std::string> &files, const std::string& file0, TokenList& tokenlist, const simplecpp::DUI& dui)
+    void preprocess(const char (&code)[size], std::vector<std::string> &files, const std::string& file0, TokenList& tokenlist, const simplecpp::DUI& dui)
     {
         if (!files.empty())
             throw std::runtime_error("file list not empty");
@@ -69,13 +74,15 @@ private:
         if (tokenlist.front())
             throw std::runtime_error("token list not empty");
 
-        const simplecpp::TokenList tokens1(code, files, file0);
+        simplecpp::OutputList outputList;
+        const simplecpp::TokenList tokens1(code, files, file0, dui, &outputList);
 
         // Preprocess..
         simplecpp::TokenList tokens2(files);
         simplecpp::FileDataCache cache;
-        // TODO: provide and handle outputList
-        simplecpp::preprocess(tokens2, tokens1, files, cache, dui);
+        simplecpp::preprocess(tokens2, tokens1, files, cache, dui, &outputList);
+        Preprocessor preprocessor(tokens2, settingsDefault, *this, Standards::Language::C);
+        (void)preprocessor.reportOutput(outputList, true);
 
         // Tokenizer..
         tokenlist.createTokens(std::move(tokens2));
@@ -117,7 +124,8 @@ private:
         simplecpp::OutputList outputList;
         std::vector<std::string> files;
 
-        simplecpp::TokenList tokens(code, size, files, Path::simplifyPath(filename), &outputList);
+        simplecpp::TokenList tokens({code, size}, files, Path::simplifyPath(filename), {}, &outputList);
+
         // TODO: we should be using the actual Preprocessor implementation
         Preprocessor preprocessor(tokens, settings, errorlogger, Path::identify(tokens.getFiles()[0], false));
 
@@ -131,12 +139,15 @@ private:
         preprocessor.simplifyPragmaAsm();
 
         std::map<std::string, std::string> cfgcode;
-        if (cfgs.empty())
-            cfgs = preprocessor.getConfigs();
+        if (cfgs.empty()) {
+            cfgs.insert("");
+            std::set<std::string> configDefines = { "__cplusplus" };
+            preprocessor.getConfigs(configDefines, cfgs);
+        }
         for (const std::string & config : cfgs) {
             try {
-                const bool writeLocations = (strstr(code, "#file") != nullptr) || (strstr(code, "#include") != nullptr);
-                cfgcode[config] = preprocessor.getcode(config, files, writeLocations);
+                const bool writeLocs = (strstr(code, "#include") != nullptr);
+                cfgcode[config] = preprocessor.getcode(config, files, writeLocs);
             } catch (const simplecpp::Output &) {
                 cfgcode[config] = "";
             }
@@ -276,6 +287,7 @@ private:
 
         // inline suppression, missingInclude/missingIncludeSystem
         TEST_CASE(inline_suppressions);
+        TEST_CASE(inline_suppressions_not_next_line);
 
         // remark comment
         TEST_CASE(remarkComment1);
@@ -313,6 +325,15 @@ private:
         TEST_CASE(getConfigs11); // #9832 - include guards
         TEST_CASE(getConfigs12); // #14222
         TEST_CASE(getConfigs13); // #14222
+        TEST_CASE(getConfigs_gte); // #1059
+        TEST_CASE(getConfigs_lte); // #1059
+        TEST_CASE(getConfigs_gt); // #1059
+        TEST_CASE(getConfigs_lt); // #1059
+        TEST_CASE(getConfigs_eq_compound); // #1059
+        TEST_CASE(getConfigs_gte_compound); // #1059
+        TEST_CASE(getConfigs_lte_compound); // #1059
+        TEST_CASE(getConfigs_gt_compound); // #1059
+        TEST_CASE(getConfigs_lt_compound); // #1059
         TEST_CASE(getConfigsError);
 
         TEST_CASE(getConfigsD1);
@@ -324,6 +345,11 @@ private:
         TEST_CASE(getConfigsU5);
         TEST_CASE(getConfigsU6);
         TEST_CASE(getConfigsU7);
+
+        TEST_CASE(getConfigsAndCodeIssue14317);
+        TEST_CASE(getConfigsMostGeneralConfigIssue14317);
+
+        TEST_CASE(getConfigsInvalid); // #14732
 
         TEST_CASE(if_sizeof);
 
@@ -347,6 +373,10 @@ private:
         TEST_CASE(testMissingIncludeMixed);
         TEST_CASE(testMissingIncludeCheckConfig);
 
+        TEST_CASE(testLazyInclude);
+        TEST_CASE(testKeepComments);
+        TEST_CASE(testKeepCommentsMultiline);
+
         TEST_CASE(hasInclude);
 
         TEST_CASE(limitsDefines);
@@ -356,6 +386,10 @@ private:
         TEST_CASE(standard);
 
         TEST_CASE(writeLocations);
+
+        TEST_CASE(pragmaAsm);
+
+        TEST_CASE(dumpPreprocessor);
     }
 
     template<size_t size>
@@ -368,11 +402,28 @@ private:
         if (library)
             ASSERT(settings.library.load("", library, false).errorcode == Library::ErrorCode::OK);
         std::vector<std::string> files;
-        // TODO: this adds an empty filename
-        simplecpp::TokenList tokens(code,files);
-        Preprocessor preprocessor(tokens, settings, *this, Standards::Language::C); // TODO: do we need to consider #file?
+        simplecpp::OutputList outputList;
+        simplecpp::TokenList tokens(code, files, "test.c", {}, &outputList);
+        Preprocessor preprocessor(tokens, settings, *this, Standards::Language::C);
+        std::set<std::string> configs = { "" };
+        std::set<std::string> configDefines = { "__cplusplus" };
+        const auto getDefineName = [](const std::string &defineString) {
+            return defineString.substr(0, defineString.find_first_of("( "));
+        };
+        std::transform(settings.library.defines().begin(),
+                       settings.library.defines().end(),
+                       std::inserter(configDefines, configDefines.end()),
+                       getDefineName);
+        preprocessor.setLoadCallback([&](simplecpp::FileData &data, bool loaded) {
+            if (loaded) {
+                Preprocessor::removeComments(data.tokens);
+                preprocessor.getConfigs(data.filename, data.tokens, configDefines, configs);
+            }
+        });
         preprocessor.removeComments();
-        const std::set<std::string> configs = preprocessor.getConfigs();
+        preprocessor.getConfigs(configDefines, configs);
+        ASSERT(preprocessor.loadAllIncludes(files));
+        ASSERT(!preprocessor.reportOutput(outputList, true));
         std::string ret;
         for (const std::string & config : configs)
             ret += config + '\n';
@@ -382,10 +433,15 @@ private:
     template<size_t size>
     std::size_t getHash(const char (&code)[size]) {
         std::vector<std::string> files;
-        // TODO: this adds an empty filename
-        simplecpp::TokenList tokens(code,files);
-        Preprocessor preprocessor(tokens, settingsDefault, *this, Standards::Language::C); // TODO: do we need to consider #file?
+        simplecpp::TokenList tokens(code,files,"test.c");
+        Preprocessor preprocessor(tokens, settingsDefault, *this, Standards::Language::C);
+        preprocessor.setLoadCallback([](simplecpp::FileData &data, bool loaded) {
+            if (loaded) {
+                Preprocessor::removeComments(data.tokens);
+            }
+        });
         preprocessor.removeComments();
+        ASSERT(preprocessor.loadAllIncludes(files));
         return preprocessor.calculateHash("");
     }
 
@@ -394,7 +450,7 @@ private:
                                 "cpp\n"
                                 "#else\n"
                                 "c\n"
-                                "#endif";
+                                "#endif\n";
 
         {
             // Preprocess => actual result..
@@ -422,7 +478,7 @@ private:
                                 "#else\n"
                                 "#error abcd\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nA\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nA=A\n", getConfigsStr(filedata));
     }
 
     void error2() {
@@ -448,16 +504,19 @@ private:
     void error4() {
         // In included file
         {
+            ScopedFile header("ab.h", "#error hello world!\n");
             const auto settings = dinit(Settings, $.userDefines = "TEST");
-            const char code[] = "#file \"ab.h\"\n#error hello world!\n#endfile";
+            const char code[] = "#include \"ab.h\"\n";
             (void)getcodeforcfg(settings, *this, code, "TEST", "test.c");
             ASSERT_EQUALS("[ab.h:1:2]: (error) #error hello world! [preprocessorErrorDirective]\n", errout_str());
         }
 
         // After including a file
         {
+            ScopedFile header("ab.h", "");
             const auto settings = dinit(Settings, $.userDefines = "TEST");
-            const char code[] = "#file \"ab.h\"\n\n#endfile\n#error aaa";
+            const char code[] = "#include \"ab.h\"\n"
+                                "#error aaa\n";
             (void)getcodeforcfg(settings, *this, code, "TEST", "test.c");
             ASSERT_EQUALS("[test.c:2:2]: (error) #error aaa [preprocessorErrorDirective]\n", errout_str());
         }
@@ -482,7 +541,7 @@ private:
                                  "#else\n"
                                  "#error 2\n"
                                  "#endif\n";
-        ASSERT_EQUALS("\nA\nA;B\nB\n", getConfigsStr(filedata1));
+        ASSERT_EQUALS("\nA=A\nA=A;B=B\nB=B\n", getConfigsStr(filedata1));
 
         const char filedata2[] = "#ifndef A\n"
                                  "#error 1\n"
@@ -514,7 +573,7 @@ private:
                                 "#else\n"
                                 "#error \"2\"\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nB\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nB=B\n", getConfigsStr(filedata));
     }
 
     void error8() {
@@ -526,8 +585,8 @@ private:
                                 "\n"
                                 "#ifndef C\n"
                                 "#error aa\n"
-                                "#endif";
-        ASSERT_EQUALS("A;B;C\nA;C\nC\n", getConfigsStr(filedata));
+                                "#endif\n";
+        ASSERT_EQUALS("A=A;B=B;C\nA=A;C\nC\n", getConfigsStr(filedata));
     }
 
     void setPlatformInfo() {
@@ -560,35 +619,35 @@ private:
     }
 
     void includeguard1() {
+        ScopedFile header("abc.h",
+                          "#ifndef abcH\n"
+                          "#define abcH\n"
+                          "#endif\n");
         // Handling include guards..
-        const char filedata[] = "#file \"abc.h\"\n"
-                                "#ifndef abcH\n"
-                                "#define abcH\n"
-                                "#endif\n"
-                                "#endfile\n"
+        const char filedata[] = "#include \"abc.h\"\n"
                                 "#ifdef ABC\n"
-                                "#endif";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+                                "#endif\n";
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
     void includeguard2() {
+        ScopedFile header("abc.h",
+                          "foo\n"
+                          "#ifdef ABC\n"
+                          "\n"
+                          "#endif\n");
         // Handling include guards..
-        const char filedata[] = "#file \"abc.h\"\n"
-                                "foo\n"
-                                "#ifdef ABC\n"
-                                "\n"
-                                "#endif\n"
-                                "#endfile\n";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+        const char filedata[] = "#include \"abc.h\"\n";
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
 
     void ifdefwithfile() {
+        ScopedFile header("abc.h", "class A{};/*\n\n\n\n\n\n\n*/\n");
+
         // Handling include guards..
         const char filedata[] = "#ifdef ABC\n"
-                                "#file \"abc.h\"\n"
-                                "class A{};/*\n\n\n\n\n\n\n*/\n"
-                                "#endfile\n"
+                                "#include \"abc.h\"\n"
                                 "#endif\n"
                                 "int main() {}\n";
 
@@ -598,7 +657,7 @@ private:
         // Expected configurations: "" and "ABC"
         ASSERT_EQUALS(2, actual.size());
         ASSERT_EQUALS("\n\n\nint main ( ) { }", actual.at(""));
-        ASSERT_EQUALS("\n#line 1 \"abc.h\"\nclass A { } ;\n#line 4 \"file.c\"\n int main ( ) { }", actual.at("ABC"));
+        ASSERT_EQUALS("\n#line 1 \"abc.h\"\nclass A { } ;\n#line 4 \"file.c\"\n int main ( ) { }", actual.at("ABC=ABC"));
     }
 
     void if0() {
@@ -635,7 +694,7 @@ private:
                                     "#else\n"
                                     "GHI\n"
                                     "#endif\n";
-            ASSERT_EQUALS("\nDEF1\nDEF2\n", getConfigsStr(filedata));
+            ASSERT_EQUALS("\nDEF1=DEF1\nDEF2=DEF2\n", getConfigsStr(filedata));
         }
     }
 
@@ -645,7 +704,7 @@ private:
                                 "#else\n"
                                 "    B\n"
                                 "#endif\n";
-        TODO_ASSERT_EQUALS("\nLIBVER=101\n", "\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nLIBVER=101\n", getConfigsStr(filedata));
     }
 
     void if_cond2() {
@@ -655,7 +714,7 @@ private:
                                 "#if defined(A) && defined(B)\n"
                                 "ab\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nA\nA;B\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nA=A\nA=A;B=B\n", getConfigsStr(filedata));
 
         if_cond2b();
         if_cond2c();
@@ -672,7 +731,7 @@ private:
                                 "#else\n"
                                 "a\n"
                                 "#endif\n";
-        TODO_ASSERT_EQUALS("\nA;B\n", "\nA\nB\n", getConfigsStr(filedata));
+        TODO_ASSERT_EQUALS("\nA;B=B\n", "\nA\nB=B\n", getConfigsStr(filedata));
     }
 
     void if_cond2c() {
@@ -686,7 +745,7 @@ private:
                                 "#else\n"
                                 "a\n"
                                 "#endif\n";
-        TODO_ASSERT_EQUALS("\nA\nA;B\n", "\nA\nB\n", getConfigsStr(filedata));
+        TODO_ASSERT_EQUALS("\nA\nA;B=B\n", "\nA\nB=B\n", getConfigsStr(filedata));
     }
 
     void if_cond2d() {
@@ -705,7 +764,7 @@ private:
                                 "!b\n"
                                 "#endif\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nA\nA;B\nB\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nA\nA;B=B\nB=B\n", getConfigsStr(filedata));
     }
 
     void if_cond2e() {
@@ -724,7 +783,7 @@ private:
                                 "abc\n"
                                 "#endif\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nA\nA;B;C\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nA=A\nA=A;B=B;C=C\n", getConfigsStr(filedata));
     }
 
     void if_cond4() {
@@ -745,7 +804,7 @@ private:
                                     "#endif\n"
                                     "}\n"
                                     "#endif\n";
-            ASSERT_EQUALS("\nA\nA;B\n", getConfigsStr(filedata));
+            ASSERT_EQUALS("\nA\nA;B=B\n", getConfigsStr(filedata));
         }
 
         {
@@ -780,20 +839,20 @@ private:
                                 "#if defined(B) && defined(A)\n"
                                 "ef\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nA;B\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nA=A;B=B\n", getConfigsStr(filedata));
     }
 
     void if_cond6() {
         const char filedata[] = "\n"
                                 "#if defined(A) && defined(B))\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nA;B\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nA=A;B=B\n", getConfigsStr(filedata));
     }
 
     void if_cond8() {
         const char filedata[] = "#if defined(A) + defined(B) + defined(C) != 1\n"
                                 "#endif\n";
-        TODO_ASSERT_EQUALS("\nA\n", "\nA;B;C\n", getConfigsStr(filedata));
+        TODO_ASSERT_EQUALS("\nA=A\n", "\nA=A;B=B;C=C\n", getConfigsStr(filedata));
     }
 
 
@@ -852,7 +911,7 @@ private:
         const char filedata[] = "#if defined(DEF_10) || defined(DEF_11)\n"
                                 "a1;\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nDEF_10;DEF_11\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nDEF_10=DEF_10;DEF_11=DEF_11\n", getConfigsStr(filedata));
     }
 
     void if_or_2() {
@@ -903,7 +962,7 @@ private:
     void ticket_4922() { // #4922
         const char code[] = "__asm__ \n"
                             "{ int extern __value) 0; (double return (\"\" } extern\n"
-                            "__typeof __finite (__finite) __finite __inline \"__GI___finite\");";
+                            "__typeof __finite (__finite) __finite __inline \"__GI___finite\");\n";
         (void)getcode(settings0, *this, code);
     }
 
@@ -1014,7 +1073,7 @@ private:
 
     void macro_simple16() {  // # 4703
         const char filedata[] = "#define MACRO( A, B, C ) class A##B##C##Creator {};\n"
-                                "MACRO( B\t, U , G )";
+                                "MACRO( B\t, U , G )\n";
         ASSERT_EQUALS("\nclass BUGCreator { } ;", expandMacros(filedata, *this));
     }
 
@@ -1022,41 +1081,41 @@ private:
         // It would probably be OK if the generated code was
         // "\n123+$123" since the first 123 comes from the source code
         const char filedata[] = "#define MACRO(A) A+123\n"
-                                "MACRO(123)";
+                                "MACRO(123)\n";
         ASSERT_EQUALS("\n123 + 123", expandMacros(filedata, *this));
     }
 
     void macro_simple18() {  // (1e-7)
         const char filedata1[] = "#define A (1e-7)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( 1e-7 ) ;", expandMacros(filedata1, *this));
 
         const char filedata2[] = "#define A (1E-7)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( 1E-7 ) ;", expandMacros(filedata2, *this));
 
         const char filedata3[] = "#define A (1e+7)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( 1e+7 ) ;", expandMacros(filedata3, *this));
 
         const char filedata4[] = "#define A (1.e+7)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( 1.e+7 ) ;", expandMacros(filedata4, *this));
 
         const char filedata5[] = "#define A (1.7f)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( 1.7f ) ;", expandMacros(filedata5, *this));
 
         const char filedata6[] = "#define A (.1)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( .1 ) ;", expandMacros(filedata6, *this));
 
         const char filedata7[] = "#define A (1.)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( 1. ) ;", expandMacros(filedata7, *this));
 
         const char filedata8[] = "#define A (8.0E+007)\n"
-                                 "a=A;";
+                                 "a=A;\n";
         ASSERT_EQUALS("\na = ( 8.0E+007 ) ;", expandMacros(filedata8, *this));
     }
 
@@ -1228,8 +1287,8 @@ private:
 
     void macro_NULL() {
         // See ticket #4482 - UB when passing NULL to variadic function
-        ASSERT_EQUALS("\n0", expandMacros("#define null 0\nnull", *this));
-        TODO_ASSERT_EQUALS("\nNULL", "\n0", expandMacros("#define NULL 0\nNULL", *this)); // TODO: Let the tokenizer handle NULL?
+        ASSERT_EQUALS("\n0", expandMacros("#define null 0\nnull\n", *this));
+        TODO_ASSERT_EQUALS("\nNULL\n", "\n0", expandMacros("#define NULL 0\nNULL\n", *this)); // TODO: Let the tokenizer handle NULL?
     }
 
     void string1() {
@@ -1479,7 +1538,7 @@ private:
                                 "#pragma asm foo\n"
                                 "    mov r1, 11\n"
                                 "#pragma endasm bar\n"
-                                "bbb";
+                                "bbb\n";
 
         // Preprocess => actual result..
         const std::map<std::string, std::string> actual = getcode(settings0, *this, filedata);
@@ -1493,7 +1552,7 @@ private:
         const char filedata[] = "#pragma asm\n"
                                 "    mov @w1, 11\n"
                                 "#pragma endasm ( temp=@w1 )\n"
-                                "bbb";
+                                "bbb\n";
 
         // Preprocess => actual result..
         const std::map<std::string, std::string> actual = getcode(settings0, *this, filedata);
@@ -1516,7 +1575,7 @@ private:
         ASSERT_EQUALS(2, actual.size());
         const std::string expected("void f ( ) {\n\n\n}");
         ASSERT_EQUALS(expected, actual.at(""));
-        ASSERT_EQUALS(expected, actual.at("A"));
+        ASSERT_EQUALS(expected, actual.at("A=A"));
     }
 
     void handle_error() {
@@ -1552,22 +1611,9 @@ private:
         }
 
         {
-            const char filedata[] = "#file \"abc.h\"\n"
-                                    "#define a\n"
-                                    "\"\n"
-                                    "#endfile\n";
-
-            // expand macros..
-            const std::string actual(expandMacros(filedata, *this));
-
-            ASSERT_EQUALS("", actual);
-            ASSERT_EQUALS("[abc.h:2:1]: (error) No pair for character (\"). Can't process file. File is either invalid or unicode, which is currently not supported. [syntaxError]\n", errout_str());
-        }
-
-        {
-            const char filedata[] = "#file \"abc.h\"\n"
-                                    "#define a\n"
-                                    "#endfile\n"
+            ScopedFile header("abc.h",
+                              "#define a\n");
+            const char filedata[] = "#include \"abc.h\"\n"
                                     "\"\n";
 
             // expand macros..
@@ -1628,7 +1674,7 @@ private:
                                 "#else\n"
                                 "#define N 20\n"
                                 "#endif\n"
-                                "N";
+                                "N\n";
 
         // Preprocess => actual result..
         const std::map<std::string, std::string> actual = getcode(settings0, *this, filedata);
@@ -1636,7 +1682,7 @@ private:
         // Compare results..
         ASSERT_EQUALS(2, actual.size());
         ASSERT_EQUALS("\n\n\n\n\n$20", actual.at(""));
-        ASSERT_EQUALS("\n\n\n\n\n$10", actual.at("A"));
+        ASSERT_EQUALS("\n\n\n\n\n$10", actual.at("A=A"));
         ASSERT_EQUALS("", errout_str());
     }
 
@@ -1688,7 +1734,7 @@ private:
         // Compare results..
         ASSERT_EQUALS(2, actual.size());
         ASSERT_EQUALS("", actual.at(""));
-        ASSERT_EQUALS("\nA\n\n\nA", actual.at("ABC"));
+        ASSERT_EQUALS("\nA\n\n\nA", actual.at("ABC=ABC"));
     }
 
     void define_if1() {
@@ -1696,14 +1742,14 @@ private:
             const char filedata[] = "#define A 0\n"
                                     "#if A\n"
                                     "FOO\n"
-                                    "#endif";
+                                    "#endif\n";
             ASSERT_EQUALS("", getcodeforcfg(settings0, *this, filedata,"","test.c"));
         }
         {
             const char filedata[] = "#define A 1\n"
                                     "#if A==1\n"
                                     "FOO\n"
-                                    "#endif";
+                                    "#endif\n";
             ASSERT_EQUALS("\n\nFOO", getcodeforcfg(settings0, *this, filedata,"","test.c"));
         }
     }
@@ -1713,7 +1759,7 @@ private:
                                 "#define B A\n"
                                 "#if (B==A) || (B==C)\n"
                                 "FOO\n"
-                                "#endif";
+                                "#endif\n";
         ASSERT_EQUALS("\n\n\nFOO", getcodeforcfg(settings0, *this, filedata,"","test.c"));
     }
 
@@ -1721,7 +1767,7 @@ private:
         const char filedata[] = "#define A 0\n"
                                 "#if (A==0)\n"
                                 "FOO\n"
-                                "#endif";
+                                "#endif\n";
         ASSERT_EQUALS("\n\nFOO", getcodeforcfg(settings0, *this, filedata,"","test.c"));
     }
 
@@ -1729,7 +1775,7 @@ private:
         const char filedata[] = "#define X +123\n"
                                 "#if X==123\n"
                                 "FOO\n"
-                                "#endif";
+                                "#endif\n";
         ASSERT_EQUALS("\n\nFOO", getcodeforcfg(settings0, *this, filedata,"","test.c"));
     }
 
@@ -1739,7 +1785,7 @@ private:
                                     "#define B (A & 0x00f0)\n"
                                     "#if B==0x0010\n"
                                     "FOO\n"
-                                    "#endif";
+                                    "#endif\n";
             ASSERT_EQUALS("\n\n\nFOO", getcodeforcfg(settings0, *this, filedata,"","test.c"));
         }
         {
@@ -1748,14 +1794,14 @@ private:
                                     "#define C (B & A)\n"
                                     "#if C==0x0010\n"
                                     "FOO\n"
-                                    "#endif";
+                                    "#endif\n";
             ASSERT_EQUALS("\n\n\n\nFOO", getcodeforcfg(settings0, *this, filedata,"","test.c"));
         }
         {
             const char filedata[] = "#define A (1+A)\n" // don't hang for recursive macros
                                     "#if A==1\n"
                                     "FOO\n"
-                                    "#endif";
+                                    "#endif\n";
             ASSERT_EQUALS("\n\nFOO", getcodeforcfg(settings0, *this, filedata,"","test.c"));
         }
     }
@@ -1887,7 +1933,7 @@ private:
         const char filedata[] = "#ifndef A\n"
                                 "#define A(x) x\n"
                                 "#endif\n"
-                                "A(123);";
+                                "A(123);\n";
 
         // Preprocess => actual result..
         const std::map<std::string, std::string> actual = getcode(settings0, *this, filedata);
@@ -1929,9 +1975,9 @@ private:
         // Compare results..
         ASSERT_EQUALS(4, actual.size());
         ASSERT(actual.find("") != actual.end());
-        ASSERT(actual.find("BAR") != actual.end());
-        ASSERT(actual.find("FOO") != actual.end());
-        ASSERT(actual.find("BAR;FOO") != actual.end());
+        ASSERT(actual.find("BAR=BAR") != actual.end());
+        ASSERT(actual.find("FOO=FOO") != actual.end());
+        ASSERT(actual.find("BAR=BAR;FOO=FOO") != actual.end());
     }
 
 
@@ -1965,25 +2011,25 @@ private:
         // cases should be fixed whenever this other bug is fixed
         ASSERT_EQUALS(2U, actual.size());
 
-        ASSERT_EQUALS_MSG(true, (actual.find("A") != actual.end()), "A is expected to be checked but it was not checked");
+        ASSERT_EQUALS_MSG(true, (actual.find("A=A") != actual.end()), "A is expected to be checked but it was not checked");
 
-        ASSERT_EQUALS_MSG(true, (actual.find("A;A;B") == actual.end()), "A;A;B is expected to NOT be checked but it was checked");
+        ASSERT_EQUALS_MSG(true, (actual.find("A=A;A=A;B=B") == actual.end()), "A;A;B is expected to NOT be checked but it was checked");
     }
 
     void invalid_define_1() {
         (void)getcode(settings0, *this, "#define =\n");
-        ASSERT_EQUALS("[file.c:1:2]: (error) Failed to parse #define [syntaxError]\n", errout_str());
+        ASSERT_EQUALS("[file.c:1:2]: (error) Failed to parse #define, bad macro syntax [syntaxError]\n", errout_str());
     }
 
     void invalid_define_2() {  // #4036
         (void)getcode(settings0, *this, "#define () {(int f(x) }\n");
-        ASSERT_EQUALS("[file.c:1:2]: (error) Failed to parse #define [syntaxError]\n", errout_str());
+        ASSERT_EQUALS("[file.c:1:2]: (error) Failed to parse #define, bad macro syntax [syntaxError]\n", errout_str());
     }
 
     void inline_suppressions() {
-        /*const*/ Settings settings;
-        settings.inlineSuppressions = true;
-        settings.checks.enable(Checks::missingInclude);
+        const auto settings = dinit(Settings,
+                                    $.inlineSuppressions = true,
+                                        $.checks.enable (Checks::missingInclude));
 
         const char code[] = "// cppcheck-suppress missingInclude\n"
                             "#include \"missing.h\"\n"
@@ -2014,6 +2060,38 @@ private:
         ignore_errout(); // we are not interested in the output
     }
 
+    void inline_suppressions_not_next_line() {
+        const auto settings = dinit(Settings,
+                                    $.inlineSuppressions = true,
+                                        $.checks.enable (Checks::missingInclude));
+
+        const char code[] = "// cppcheck-suppress missingInclude\n"
+                            "// some other comment\n"
+                            "#include \"missing.h\"\n"
+                            "// cppcheck-suppress missingIncludeSystem\n"
+                            "\n" // Empty line
+                            "#include <missing2.h>\n";
+        SuppressionList inlineSuppr;
+        (void)getcodeforcfg(settings, *this, code, "", "test.c", &inlineSuppr);
+
+        auto suppressions = inlineSuppr.getSuppressions();
+        ASSERT_EQUALS(2, suppressions.size());
+
+        auto suppr = suppressions.front();
+        suppressions.pop_front();
+        ASSERT_EQUALS("missingInclude", suppr.errorId);
+        ASSERT_EQUALS("test.c", suppr.fileName);
+        ASSERT_EQUALS(3, suppr.lineNumber);
+
+        suppr = suppressions.front();
+        suppressions.pop_front();
+        ASSERT_EQUALS("missingIncludeSystem", suppr.errorId);
+        ASSERT_EQUALS("test.c", suppr.fileName);
+        ASSERT_EQUALS(6, suppr.lineNumber);
+
+        ignore_errout();
+    }
+
     void remarkComment1() {
         const char code[] = "// REMARK: assignment with 1\n"
                             "x=1;\n";
@@ -2041,7 +2119,7 @@ private:
     }
 
     void remarkComment4() {
-        const char code[] = "//REMARK /";
+        const char code[] = "//REMARK /\n";
         const auto remarkComments = getRemarkComments(code, *this);
         ASSERT_EQUALS(0, remarkComments.size());
     }
@@ -2090,19 +2168,19 @@ private:
 
     void predefine5() {  // #3737, #5119 - automatically define __cplusplus
         // #3737...
-        const char code[] = "#ifdef __cplusplus\n123\n#endif";
+        const char code[] = "#ifdef __cplusplus\n123\n#endif\n";
         ASSERT_EQUALS("",      getcodeforcfg(settings0, *this, code, "", "test.c"));
         ASSERT_EQUALS("\n123", getcodeforcfg(settings0, *this, code, "", "test.cpp"));
     }
 
     void predefine6() { // automatically define __STDC_VERSION__
-        const char code[] = "#ifdef __STDC_VERSION__\n123\n#endif";
+        const char code[] = "#ifdef __STDC_VERSION__\n123\n#endif\n";
         ASSERT_EQUALS("\n123", getcodeforcfg(settings0, *this, code, "", "test.c"));
         ASSERT_EQUALS("",      getcodeforcfg(settings0, *this, code, "", "test.cpp"));
     }
 
     void strictAnsi() {
-        const char code[] = "#ifdef __STRICT_ANSI__\n123\n#endif";
+        const char code[] = "#ifdef __STRICT_ANSI__\n123\n#endif\n";
         Settings settings;
 
         settings.standards.setStd("gnu99");
@@ -2133,7 +2211,7 @@ private:
                                 "    qwerty\n"
                                 "#endif  \n";
 
-        ASSERT_EQUALS("\nWIN32\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nWIN32=WIN32\n", getConfigsStr(filedata));
     }
 
     void getConfigs2() {
@@ -2154,7 +2232,7 @@ private:
                                 "c\n"
                                 "#endif\n";
 
-        ASSERT_EQUALS("\nABC\nABC;DEF\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\nABC=ABC;DEF=DEF\n", getConfigsStr(filedata));
     }
 
     void getConfigs4() {
@@ -2164,7 +2242,7 @@ private:
                                 "#ifdef ABC\n"
                                 "A\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
     void getConfigs5() {
@@ -2176,7 +2254,7 @@ private:
                                 "C\n"
                                 "#endif\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nABC\nDEF\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\nDEF=DEF\n", getConfigsStr(filedata));
     }
 
     void getConfigs7() {
@@ -2186,7 +2264,7 @@ private:
                                 "B\n"
                                 "#endif\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
     void getConfigs7a() {
@@ -2206,7 +2284,7 @@ private:
                                 "B\n"
                                 "#endif\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
     void getConfigs7c() {
@@ -2216,7 +2294,7 @@ private:
                                 "B\n"
                                 "#endif\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
     void getConfigs7d() {
@@ -2226,20 +2304,20 @@ private:
                                 "B\n"
                                 "#endif\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
     void getConfigs7e() {
+        ScopedFile header("test.h",
+                          "#ifndef test_h\n"
+                          "#define test_h\n"
+                          "#ifdef ABC\n"
+                          "#endif\n"
+                          "#endif\n");
         const char filedata[] = "#ifdef ABC\n"
-                                "#file \"test.h\"\n"
-                                "#ifndef test_h\n"
-                                "#define test_h\n"
-                                "#ifdef ABC\n"
-                                "#endif\n"
-                                "#endif\n"
-                                "#endfile\n"
+                                "#include \"test.h\"\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nABC\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nABC=ABC\n", getConfigsStr(filedata));
     }
 
     void getConfigs8() {
@@ -2254,17 +2332,17 @@ private:
                                 "#define bar foo\n"
                                 "#define baz bar+0\n"
                                 "#if 0\n"
-                                "#endif";
+                                "#endif\n";
         ASSERT_EQUALS("\n", getConfigsStr(filedata));
     }
 
     void getConfigs11() { // #9832 - include guards
-        const char filedata[] = "#file \"test.h\"\n"
-                                "#if !defined(test_h)\n"
-                                "#define test_h\n"
-                                "123\n"
-                                "#endif\n"
-                                "#endfile\n";
+        ScopedFile header("test.h",
+                          "#if !defined(test_h)\n"
+                          "#define test_h\n"
+                          "123\n"
+                          "#endif\n");
+        const char filedata[] = "#include \"test.h\"\n";
         ASSERT_EQUALS("\n", getConfigsStr(filedata));
     }
 
@@ -2282,6 +2360,261 @@ private:
         ASSERT_EQUALS("\n", getConfigsStr(filedata, nullptr, "gnu.cfg"));
     }
 
+    void getConfigs_gte() { // #1059
+        {
+            const char filedata[] = "#if A >= 1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=1\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A >= 201112L\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=201112L\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A >= 12147483647\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=12147483647\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_lte() { // #1059
+        {
+            const char filedata[] = "#if A <= 1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=1\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A <= 201112L\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=201112L\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A <= 12147483647\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=12147483647\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_gt() { // #1059
+        {
+            const char filedata[] = "#if A > 1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 1L\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 1U\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 1UL\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 1Z\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 0x1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 01\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 0b1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 1t\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_THROW_INTERNAL_EQUALS(getConfigsStr(filedata), INTERNAL, "Internal Error. MathLib::toBigNumber: input was not completely consumed: 1t");
+        }
+        {
+            const char filedata[] = "#if A > 1.0\n"
+                                    "1\n"
+                                    "#endif\n";
+            TODO_ASSERT_THROW(getConfigsStr(filedata), InternalError); // floating point literals are not allowed
+        }
+        {
+            const char filedata[] = "#if A > 12147483647\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=12147483648\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_lt() { // #1059
+        {
+            const char filedata[] = "#if A < 1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 1L\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 1U\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 1UL\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 1Z\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 0x1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 01\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 0b1\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 1t\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_THROW_INTERNAL_EQUALS(getConfigsStr(filedata), INTERNAL, "Internal Error. MathLib::toBigNumber: input was not completely consumed: 1t");
+        }
+        {
+            const char filedata[] = "#if A < 1.0\n"
+                                    "1\n"
+                                    "#endif\n";
+            TODO_ASSERT_THROW(getConfigsStr(filedata), InternalError); // floating point literals are not allowed
+        }
+        {
+            const char filedata[] = "#if A < 12147483647\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=12147483646\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_eq_compound() { // #1059
+        {
+            const char filedata[] = "#if A == 1 && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=1;B=B\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A == 201112L && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=201112L;B=B\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_gte_compound() { // #1059
+        {
+            const char filedata[] = "#if A >= 1 && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=1;B=B\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A >= 201112L && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=201112L;B=B\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_lte_compound() { // #1059
+        {
+            const char filedata[] = "#if A <= 1 && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=1;B=B\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A <= 201112L && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=201112L;B=B\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_gt_compound() { // #1059
+        {
+            const char filedata[] = "#if A > 1 && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=2;B=B\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A > 201112L && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=201113;B=B\n", getConfigsStr(filedata));
+        }
+    }
+
+    void getConfigs_lt_compound() { // #1059
+        {
+            const char filedata[] = "#if A < 1 && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=0;B=B\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if A < 201112L && defined(B)\n"
+                                    "1\n"
+                                    "#endif\n";
+            ASSERT_EQUALS("\nA=201111;B=B\n", getConfigsStr(filedata));
+        }
+    }
+
     void getConfigsError() {
         const char filedata1[] = "#ifndef X\n"
                                  "#error \"!X\"\n"
@@ -2293,7 +2626,7 @@ private:
                                  "#error \"!Y\"\n"
                                  "#endif\n"
                                  "#endif\n";
-        ASSERT_EQUALS("\nX;Y\nY\n", getConfigsStr(filedata2));
+        ASSERT_EQUALS("\nX=X;Y\nY\n", getConfigsStr(filedata2));
     }
 
     void getConfigsD1() {
@@ -2303,14 +2636,14 @@ private:
                                 "#endif\n"
                                 "#endif\n";
         ASSERT_EQUALS("\n", getConfigsStr(filedata, "-DX"));
-        ASSERT_EQUALS("\nX\nY\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nX=X\nY=Y\n", getConfigsStr(filedata));
     }
 
     void getConfigsU1() {
         const char filedata[] = "#ifdef X\n"
                                 "#endif\n";
         ASSERT_EQUALS("\n", getConfigsStr(filedata, "-UX"));
-        ASSERT_EQUALS("\nX\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nX=X\n", getConfigsStr(filedata));
     }
 
     void getConfigsU2() {
@@ -2334,8 +2667,8 @@ private:
         const char filedata[] = "#if defined(X) || defined(Y) || defined(Z)\n"
                                 "#else\n"
                                 "#endif\n";
-        ASSERT_EQUALS("\nY;Z\n", getConfigsStr(filedata, "-UX"));
-        ASSERT_EQUALS("\nX;Y;Z\n", getConfigsStr(filedata));
+        ASSERT_EQUALS("\nY=Y;Z=Z\n", getConfigsStr(filedata, "-UX"));
+        ASSERT_EQUALS("\nX=X;Y=Y;Z=Z\n", getConfigsStr(filedata));
     }
 
     void getConfigsU5() {
@@ -2359,13 +2692,87 @@ private:
         ASSERT_EQUALS("\nY\n", getConfigsStr(code, "-DX"));
     }
 
+    void getConfigsAndCodeIssue14317() {
+        const char filedata[] = "bool test() {\n"
+                                "return\n"
+                                "#if defined(isless)\n"
+                                "0 != isless(1.0, 2.0)\n"
+                                "#else\n"
+                                "0\n"
+                                "#endif\n"
+                                ";\n"
+                                "}\n";
+        // Test getConfigsStr()
+        ASSERT_EQUALS("\nisless=isless\n", getConfigsStr(filedata));
+
+        // Test getcode()
+        // Preprocess => actual result..
+        const std::map<std::string, std::string> actual = getcode(settings0, *this, filedata);
+
+        // Expected configurations: "" and "ABC"
+        ASSERT_EQUALS(2, actual.size());
+        ASSERT_EQUALS("bool test ( ) {\nreturn\n\n\n\n0\n\n;\n}", actual.at(""));
+        ASSERT_EQUALS("bool test ( ) {\nreturn\n\n0 != $isless ( 1.0 , 2.0 )\n\n\n\n;\n}", actual.at("isless=isless"));
+    }
+
+    void getConfigsMostGeneralConfigIssue14317() {
+        // Verifies that the most general X (out of X=X and X) and Y=Y is returned
+        // For Z: First Z=Z is added to ret, then the ifndef else branch replaces Z=Z with the more general Z
+        const char filedata[] = "#ifdef X\n"
+                                "print(X);\n"
+                                "#endif\n"
+                                "#if X\n"
+                                "print(X+1);\n"
+                                "#endif\n"
+                                "#if defined(Y)\n"
+                                "print(Y);\n"
+                                "#endif\n"
+                                "#ifdef Z\n"
+                                "print(Z);\n"
+                                "#endif\n"
+                                "#ifndef Z\n"
+                                "print(Z+1);\n"
+                                "#else\n"
+                                "print(Z+2);\n"
+                                "#endif\n";
+        // Test getConfigsStr()
+        ASSERT_EQUALS("\nX\nY=Y\nZ\n", getConfigsStr(filedata));
+    }
+
+    void getConfigsInvalid() { // #14732
+        {
+            const char filedata[] = "#if<\n";
+            ASSERT_EQUALS("\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if>\n";
+            ASSERT_EQUALS("\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if==\n";
+            ASSERT_EQUALS("\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if<=\n";
+            ASSERT_EQUALS("\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if>=\n";
+            ASSERT_EQUALS("\n", getConfigsStr(filedata));
+        }
+        {
+            const char filedata[] = "#if!\n";
+            ASSERT_EQUALS("\n", getConfigsStr(filedata));
+        }
+    }
+
     void if_sizeof() { // #4071
         const char code[] = "#if sizeof(unsigned short) == 2\n"
                             "Fred & Wilma\n"
                             "#elif sizeof(unsigned short) == 4\n"
                             "Fred & Wilma\n"
                             "#else\n"
-                            "#endif";
+                            "#endif\n";
 
         const std::map<std::string, std::string> actual = getcode(settings0, *this, code);
         ASSERT_EQUALS("\nFred & Wilma", actual.at(""));
@@ -2393,7 +2800,7 @@ private:
     void garbage() {
         const char filedata[] = "V\n"
                                 "#define X b   #endif #line 0 \"x\"  ;\n"
-                                "#if ! defined ( Y )    #endif";
+                                "#if ! defined ( Y )    #endif\n";
 
         // Preprocess => don't crash..
         (void)getcode(settings0, *this, filedata);
@@ -2408,15 +2815,16 @@ private:
 
     // test for existing local include
     void testMissingInclude() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "");
 
-        const char code[] = "#include \"header.h\"";
+        const char code[] = "#include \"header.h\"\n";
         (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
         ASSERT_EQUALS("", errout_str());
@@ -2424,13 +2832,14 @@ private:
 
     // test for missing local include
     void testMissingInclude2() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
-        const char code[] = "#include \"header.h\"";
+        const char code[] = "#include \"header.h\"\n";
         (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
         ASSERT_EQUALS("test.c:1:2: information: Include file: \"header.h\" not found. [missingInclude]\n", errout_str());
@@ -2438,15 +2847,16 @@ private:
 
     // test for missing local include - no include path given
     void testMissingInclude3() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "", "inc");
 
-        const char code[] = "#include \"header.h\"";
+        const char code[] = "#include \"header.h\"\n";
         (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
         ASSERT_EQUALS("test.c:1:2: information: Include file: \"header.h\" not found. [missingInclude]\n", errout_str());
@@ -2454,16 +2864,17 @@ private:
 
     // test for existing local include - include path provided
     void testMissingInclude4() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.includePaths.emplace_back("inc");
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.includePaths.emplace_back ("inc"),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "", "inc");
 
-        const char code[] = "#include \"inc/header.h\"";
+        const char code[] = "#include \"inc/header.h\"\n";
         (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
         ASSERT_EQUALS("", errout_str());
@@ -2471,16 +2882,17 @@ private:
 
     // test for existing local include - absolute path
     void testMissingInclude5() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.includePaths.emplace_back("inc");
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.includePaths.emplace_back ("inc"),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "", Path::getCurrentPath());
 
-        std::string code("#include \"" + header.path() + "\"");
+        std::string code("#include \"" + header.path() + "\"\n");
         (void)getcodeforcfg(settings, *this, code.data(), code.size(), "", "test.c");
 
         ASSERT_EQUALS("", errout_str());
@@ -2488,15 +2900,16 @@ private:
 
     // test for missing local include - absolute path
     void testMissingInclude6() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         const std::string header = Path::join(Path::getCurrentPath(), "header.h");
 
-        std::string code("#include \"" + header + "\"");
+        std::string code("#include \"" + header + "\"\n");
         (void)getcodeforcfg(settings, *this, code.data(), code.size(), "", "test.c");
 
         ASSERT_EQUALS("test.c:1:2: information: Include file: \"" + header + "\" not found. [missingInclude]\n", errout_str());
@@ -2504,63 +2917,67 @@ private:
 
     // test for missing system include - system includes are not searched for in relative path
     void testMissingSystemInclude() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "");
 
-        const char code[] = "#include <header.h>";
+        const char code[] = "#include <header.h>\n";
         (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
-        ASSERT_EQUALS("test.c:1:2: information: Include file: <header.h> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n", errout_str());
+        ASSERT_EQUALS("test.c:1:2: information: Include file: <header.h> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n", errout_str());
     }
 
     // test for missing system include
     void testMissingSystemInclude2() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
-        const char code[] = "#include <header.h>";
+        const char code[] = "#include <header.h>\n";
         (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
-        ASSERT_EQUALS("test.c:1:2: information: Include file: <header.h> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n", errout_str());
+        ASSERT_EQUALS("test.c:1:2: information: Include file: <header.h> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n", errout_str());
     }
 
     // test for existing system include in system include path
     void testMissingSystemInclude3() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple", // has no effect
+                                        $.includePaths.emplace_back ("system")
+                                    );
         setTemplateFormat("simple");
-        settings.includePaths.emplace_back("system");
 
         ScopedFile header("header.h", "", "system");
 
-        const char code[] = "#include <header.h>";
-        (void)getcodeforcfg(settings0, *this, code, "", "test.c");
+        const char code[] = "#include <header.h>\n";
+        (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
         ASSERT_EQUALS("", errout_str());
     }
 
     // test for existing system include - absolute path
     void testMissingSystemInclude4() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.includePaths.emplace_back("inc");
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.includePaths.emplace_back ("inc");
+                                    $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "", Path::getCurrentPath());
 
-        std::string code("#include <" + header.path() + ">");
+        std::string code("#include <" + header.path() + ">\n");
         (void)getcodeforcfg(settings, *this, code.data(), code.size(), "", "test.c");
 
         ASSERT_EQUALS("", errout_str());
@@ -2568,26 +2985,29 @@ private:
 
     // test for missing system include - absolute path
     void testMissingSystemInclude5() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         const std::string header = Path::join(Path::getCurrentPath(), "header.h");
 
-        std::string code("#include <" + header + ">");
+        std::string code("#include <" + header + ">\n");
         (void)getcodeforcfg(settings, *this, code.data(), code.size(), "", "test.c");
 
-        ASSERT_EQUALS("test.c:1:2: information: Include file: <" + header + "> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n", errout_str());
+        ASSERT_EQUALS("test.c:1:2: information: Include file: <" + header + "> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n", errout_str());
     }
 
     // test for missing local and system include
     void testMissingIncludeMixed() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+
+                                        $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "");
@@ -2596,20 +3016,21 @@ private:
         const char code[] = "#include \"missing.h\"\n"
                             "#include <header.h>\n"
                             "#include <missing2.h>\n"
-                            "#include \"header2.h\"";
+                            "#include \"header2.h\"\n";
         (void)getcodeforcfg(settings, *this, code, "", "test.c");
 
         ASSERT_EQUALS("test.c:1:2: information: Include file: \"missing.h\" not found. [missingInclude]\n"
-                      "test.c:2:2: information: Include file: <header.h> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n"
-                      "test.c:3:2: information: Include file: <missing2.h> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n", errout_str());
+                      "test.c:2:2: information: Include file: <header.h> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n"
+                      "test.c:3:2: information: Include file: <missing2.h> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n", errout_str());
     }
 
     void testMissingIncludeCheckConfig() {
-        /*const*/ Settings settings;
-        settings.clearIncludeCache = true;
-        settings.checks.enable(Checks::missingInclude);
-        settings.includePaths.emplace_back("system");
-        settings.templateFormat = "simple"; // has no effect
+        const auto settings = dinit(Settings,
+                                    $.clearIncludeCache = true,
+                                        $.checks.enable (Checks::missingInclude),
+                                        $.includePaths.emplace_back ("system");
+                                    $.templateFormat = "simple" // has no effect
+                                    );
         setTemplateFormat("simple");
 
         ScopedFile header("header.h", "");
@@ -2636,15 +3057,91 @@ private:
         (void)getcodeforcfg(settings, *this, code.data(), code.size(), "", "test.c");
 
         ASSERT_EQUALS("test.c:1:2: information: Include file: \"missing.h\" not found. [missingInclude]\n"
-                      "test.c:2:2: information: Include file: <header.h> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n"
-                      "test.c:3:2: information: Include file: <missing2.h> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n"
+                      "test.c:2:2: information: Include file: <header.h> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n"
+                      "test.c:3:2: information: Include file: <missing2.h> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n"
                       "test.c:6:2: information: Include file: \"header4.h\" not found. [missingInclude]\n"
                       "test.c:9:2: information: Include file: \"" + missing3 + "\" not found. [missingInclude]\n"
-                      "test.c:11:2: information: Include file: <" + missing4 + "> not found. Please note: Cppcheck does not need standard library headers to get proper results. [missingIncludeSystem]\n", errout_str());
+                      "test.c:11:2: information: Include file: <" + missing4 + "> not found. Please note: Standard library headers do not need to be provided to get proper results. [missingIncludeSystem]\n", errout_str());
+    }
+
+    void testLazyInclude() {
+        const char *code = "#ifdef CONFIG1\n"
+                           "#include \"header1.h\"\n"
+                           "#include \"missing1.h\"\n"
+                           "#else\n"
+                           "#include \"header2.h\"\n"
+                           "#include \"missing2.h\"\n"
+                           "#endif\n";
+
+        std::vector<std::string> files;
+        simplecpp::TokenList tokens(code, files, "test.c");
+
+        ScopedFile header1("header1.h", "1\n");
+        ScopedFile header2("header2.h", "2\n");
+
+        Settings settings;
+        Preprocessor preprocessor(tokens, settings, *this, Standards::Language::CPP);
+
+        simplecpp::OutputList outputList;
+        simplecpp::TokenList tokens2 = preprocessor.preprocess("CONFIG1", files, outputList);
+        std::string out = tokens2.stringify();
+
+        const simplecpp::FileDataCache &cache = preprocessor.mFileCache;
+
+        ASSERT_EQUALS("\n#line 1 \"header1.h\"\n1", out);
+        ASSERT_EQUALS(1, outputList.size());
+        ASSERT_EQUALS("Header not found: \"missing1.h\"", outputList.begin()->msg);
+        ASSERT_EQUALS(1, cache.size());
+    }
+
+    void testKeepComments() {
+        const char *code = "#include \"header.h\"\n"
+                           "// source file comment\n"
+                           "/* source file comment */\n";
+        std::vector<std::string> files;
+        simplecpp::TokenList tokens(code, files, "test.c");
+
+        ScopedFile header("header.h",
+                          "// header comment\n"
+                          "/* header comment */\n");
+
+        Settings settings;
+        settings.keepComments = true;
+        Preprocessor preprocessor(tokens, settings, *this, Standards::Language::CPP);
+
+        simplecpp::OutputList outputList;
+        simplecpp::TokenList tokens2 = preprocessor.preprocess("", files, outputList);
+        std::string out = tokens2.stringify();
+
+        const char *expected = "\n"
+                               "#line 1 \"header.h\"\n"
+                               "// header comment\n"
+                               "/* header comment */\n"
+                               "#line 2 \"test.c\"\n"
+                               "// source file comment\n"
+                               "/* source file comment */";
+        ASSERT_EQUALS(expected, out);
+    }
+
+    void testKeepCommentsMultiline() {
+        const char *code = "/* multi...\n"
+                           "   ...line */\n"
+                           "int x;\n";
+        std::vector<std::string> files;
+        simplecpp::TokenList tokens(code, files, "test.c");
+
+        Settings settings;
+        settings.keepComments = true;
+        Preprocessor preprocessor(tokens, settings, *this, Standards::Language::C);
+
+        const char *expected = "/* multi...\n"
+                               "   ...line */\n"
+                               "int x ;";
+        ASSERT_EQUALS(expected, preprocessor.getcode("", files, false));
     }
 
     void hasInclude() {
-        const char code[] = "#if __has_include(<directory/non-existent-header.h>)\n123\n#endif";
+        const char code[] = "#if __has_include(<directory/non-existent-header.h>)\n123\n#endif\n";
         Settings settings;
 
         settings.standards.setStd("c++11");
@@ -2664,7 +3161,7 @@ private:
         // #11928 / #10045
         const char code[] = "void f(long l) {\n"
                             "  if (l > INT_MAX) {}\n"
-                            "}";
+                            "}\n";
         const std::string actual = getcodeforcfg(settings0, *this, code, "", "test.c");
         ASSERT_EQUALS("void f ( long l ) {\n"
                       "if ( l > $2147483647 ) { }\n"
@@ -2673,9 +3170,9 @@ private:
 
     void hashCalculation() {
         // #12383
-        const char code[] = "int a;";
-        const char code2[] = "int  a;"; // extra space
-        const char code3[] = "\n\nint a;"; // extra new line
+        const char code[] = "int a;\n";
+        const char code2[] = "int  a;\n"; // extra space
+        const char code3[] = "\n\nint a;\n"; // extra new line
 
         ASSERT_EQUALS(getHash(code), getHash(code));
         ASSERT_EQUALS(getHash(code2), getHash(code2));
@@ -2685,9 +3182,9 @@ private:
         ASSERT(getHash(code2) != getHash(code3));
     }
 
-    void standard() const {
+    void standard() {
 
-        const char code[] = "int a;";
+        const char code[] = "int a;\n";
         // TODO: this bypasses the standard determined from the settings - the parameter should not be exposed
         simplecpp::DUI dui;
 
@@ -2727,7 +3224,8 @@ private:
             dui.std = "gnu77";
             std::vector<std::string> files;
             TokenList tokenlist{settingsDefault, Standards::Language::CPP};
-            preprocess(code, files, "test.cpp", tokenlist, dui);
+            // TODO: can this happen from application code? if yes we need to turn it into a proper error
+            ASSERT_THROW_EQUALS(preprocess(code, files, "test.cpp", tokenlist, dui), std::runtime_error, "unexpected simplecpp::Output type 12");
             ASSERT(!tokenlist.front()); // nothing is tokenized when an unknown standard is provided
         }
     }
@@ -2737,8 +3235,8 @@ private:
         const char inc[] = "class A {\n"
                            "public:\n"
                            "    void f() {}\n"
-                           "};";
-        const char code[] = R"(#include "test.h")";
+                           "};\n";
+        const char code[] = "#include \"test.h\"\n";
         ScopedFile header("test.h", inc);
         const std::string processed = getcodeforcfg(settingsDefault, *this, code, "", "test.cpp");
         ASSERT_EQUALS(
@@ -2749,6 +3247,36 @@ private:
             "void f ( ) { }\n"
             "} ;",
             processed);
+    }
+
+    void pragmaAsm()
+    {
+        const char code[] = "#pragma asm\n";
+        ASSERT_THROW_INTERNAL(getcodeforcfg(settingsDefault, *this, code, "", "test.cpp"), InternalError::SYNTAX);
+    }
+
+    void dumpPreprocessor() {
+        const char code[] = "#if M == 0\n"
+                            "#endif\n;\n";
+        std::vector<std::string> files;
+        simplecpp::OutputList outputList;
+
+        Settings settings;
+        settings.relativePaths = true;
+        settings.basePaths.emplace_back("/some/path");
+
+        simplecpp::TokenList tokens1(code, files, "/some/path/test.cpp", {}, &outputList);
+        Preprocessor preprocessor(tokens1, settings, *this, Standards::Language::CPP);
+        (void)preprocessor.preprocess("", files, outputList);
+        (void)preprocessor.reportOutput(outputList, true);
+
+        std::ostringstream ostr;
+        preprocessor.dump(ostr);
+        ASSERT_EQUALS(
+            "  <simplecpp-if-cond>\n"
+            "    <if-cond file=\"test.cpp\" line=\"1\" column=\"2\" E=\"M == 0\" result=\"1\"/>\n"
+            "  </simplecpp-if-cond>\n",
+            ostr.str());
     }
 };
 

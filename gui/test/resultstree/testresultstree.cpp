@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2021 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 
 // headers that declare mocked functions/variables
 #include "applicationlist.h"
-#include "common.h"
+#include "filesettings.h"
 #include "projectfile.h"
 #include "threadhandler.h"
 #include "threadresult.h"
@@ -33,6 +33,7 @@
 #include "errorlogger.h"
 #include "errortypes.h"
 #include "report.h"
+#include "resultitem.h"
 #include "showtypes.h"
 #include "suppressions.h"
 #include "xmlreport.h"
@@ -91,16 +92,20 @@ void ThreadHandler::stop() {
 void ThreadHandler::threadDone() {
     throw 1;
 }
+// NOLINTBEGIN(performance-unnecessary-value-param)
+void ThreadHandler::startCheck(CheckThread::Details /*unused*/) {
+    throw 1;
+}
+void ThreadHandler::finishCheck(CheckThread::Details /*unused*/) {
+    throw 1;
+}
+// NOLINTEND(performance-unnecessary-value-param)
 Application& ApplicationList::getApplication(const int /*unused*/) {
     throw 1;
 }
 const Application& ApplicationList::getApplication(const int index) const {
     return mApplications.at(index);
 }
-QString getPath(const QString &type) {
-    return "/" + type;
-}
-void setPath(const QString & /*unused*/, const QString & /*unused*/) {}
 QString XmlReport::quoteMessage(const QString &message) {
     return message;
 }
@@ -108,13 +113,17 @@ QString XmlReport::unquoteMessage(const QString &message) {
     return message;
 }
 XmlReport::XmlReport(const QString& filename) : Report(filename) {}
-void ThreadResult::fileChecked(const QString & /*unused*/) {
+// NOLINTNEXTLINE(performance-unnecessary-value-param)
+void ThreadResult::finishCheck(CheckThread::Details /*unused*/) {
     throw 1;
 }
 void ThreadResult::reportOut(const std::string & /*unused*/, Color /*unused*/) {
     throw 1;
 }
 void ThreadResult::reportErr(const ErrorMessage & /*unused*/) {
+    throw 1;
+}
+void ThreadResult::reportProgress(const std::string &/*filename*/, const char /*stage*/[], const std::size_t /*value*/) {
     throw 1;
 }
 
@@ -132,6 +141,19 @@ void TestResultsTree::test1() const
     QCOMPARE(tree.isRowHidden(0,QModelIndex()), true);  // Added item is hidden
     tree.showResults(ShowTypes::ShowType::ShowInformation, true);
     QCOMPARE(tree.isRowHidden(0,QModelIndex()), false); // Show item
+}
+
+void TestResultsTree::duplicateResults() const
+{
+    // #14359 - filter out duplicate warnings
+    ResultsTree tree(nullptr);
+
+    ErrorItem errorItem;
+    errorItem.summary = errorItem.message = "test";
+    errorItem.severity = Severity::error;
+    errorItem.errorPath << QErrorPathItem();
+    QVERIFY(tree.addErrorItem(errorItem));
+    QVERIFY(!tree.addErrorItem(errorItem));
 }
 
 static QErrorPathItem createErrorPathItem(QString file, int line, int column, QString info) {
@@ -279,6 +301,35 @@ void TestResultsTree::testReportType() const
              "missingReturn,Mandatory,17.4");
 }
 
+void TestResultsTree::testReportTypeIcon() const {
+    ResultsTree tree(nullptr);
+    tree.setReportType(ReportType::misraC2012);
+    tree.addErrorItem(createErrorItem("file1.c", 10, Severity::style, "some rule text", "premium-misra-c-2012-1.1")); // Required
+    tree.addErrorItem(createErrorItem("file1.c", 20, Severity::style, "some rule text", "premium-misra-c-2012-1.2")); // Advisory
+    tree.addErrorItem(createErrorItem("file1.c", 30, Severity::style, "some rule text", "premium-misra-c-2012-9.1")); // Mandatory
+
+    const auto* model = dynamic_cast<QStandardItemModel*>(tree.model());
+    QVERIFY(model != nullptr);
+    const ResultItem* fileItem = dynamic_cast<ResultItem*>(model->item(0,0));
+
+    const ResultItem* err1 = dynamic_cast<ResultItem*>(fileItem->child(0,0));
+    const ResultItem* err2 = dynamic_cast<ResultItem*>(fileItem->child(1,0));
+    const ResultItem* err3 = dynamic_cast<ResultItem*>(fileItem->child(2,0));
+
+    QCOMPARE(err1->getIconFileName(), ":images/dialog-warning.png");
+    QCOMPARE(err2->getIconFileName(), ":images/applications-development.png");
+    QCOMPARE(err3->getIconFileName(), ":images/dialog-error.png");
+
+    tree.setReportType(ReportType::normal);
+    QCOMPARE(err1->getIconFileName(), ":images/applications-development.png");
+    QCOMPARE(err2->getIconFileName(), ":images/applications-development.png");
+    QCOMPARE(err3->getIconFileName(), ":images/applications-development.png");
+
+    tree.setReportType(ReportType::misraC2012);
+    QCOMPARE(err1->getIconFileName(), ":images/dialog-warning.png");
+    QCOMPARE(err2->getIconFileName(), ":images/applications-development.png");
+    QCOMPARE(err3->getIconFileName(), ":images/dialog-error.png");
+}
 
 void TestResultsTree::testGetGuidelineError() const
 {

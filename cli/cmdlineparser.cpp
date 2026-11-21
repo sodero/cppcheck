@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 
 #include "addoninfo.h"
 #include "check.h"
+#include "checks.h"
 #include "checkers.h"
 #include "color.h"
 #include "config.h"
@@ -36,14 +37,12 @@
 #include "settings.h"
 #include "standards.h"
 #include "suppressions.h"
-#include "timer.h"
 #include "utils.h"
 
 #include "frontend.h"
 
 #include <algorithm>
 #include <cassert>
-#include <climits>
 #include <cstdio>
 #include <cstdlib> // EXIT_FAILURE
 #include <cstring>
@@ -51,7 +50,6 @@
 #include <iostream>
 #include <iterator>
 #include <list>
-#include <memory>
 #include <set>
 #include <sstream>
 #include <unordered_set>
@@ -59,9 +57,12 @@
 
 #ifdef HAVE_RULES
 #include "regex.h"
+#include "rule.h"
 
 // xml is used for rules
 #include "xml.h"
+
+#include <memory>
 #endif
 
 static bool addFilesToList(const std::string& fileList, std::vector<std::string>& pathNames)
@@ -77,9 +78,7 @@ static bool addFilesToList(const std::string& fileList, std::vector<std::string>
         files = &infile;
     }
     std::string fileName;
-    // cppcheck-suppress accessMoved - FP
     while (std::getline(*files, fileName)) { // next line
-        // cppcheck-suppress accessMoved - FP
         if (!fileName.empty()) {
             pathNames.emplace_back(std::move(fileName));
         }
@@ -93,7 +92,6 @@ static bool addIncludePathsToList(const std::string& fileList, std::list<std::st
     std::ifstream files(fileList);
     if (files) {
         std::string pathName;
-        // cppcheck-suppress accessMoved - FP
         while (std::getline(files, pathName)) { // next line
             if (!pathName.empty()) {
                 pathName = Path::removeQuotationMarks(std::move(pathName));
@@ -207,8 +205,6 @@ bool CmdLineParser::fillSettingsFromArgs(int argc, const char* const argv[])
     assert(!(!pathnamesRef.empty() && !fileSettingsRef.empty()));
 
     if (!fileSettingsRef.empty()) {
-        // TODO: de-duplicate
-
         std::list<FileSettings> fileSettings;
         if (!mSettings.fileFilters.empty()) {
             // filter only for the selected filenames from all project files
@@ -225,6 +221,8 @@ bool CmdLineParser::fillSettingsFromArgs(int argc, const char* const argv[])
         else {
             fileSettings = fileSettingsRef;
         }
+
+        // TODO: de-duplicate
 
         mFileSettings.clear();
 
@@ -266,19 +264,6 @@ bool CmdLineParser::fillSettingsFromArgs(int argc, const char* const argv[])
             return false;
         }
 
-        // de-duplicate files
-        {
-            auto it = filesResolved.begin();
-            while (it != filesResolved.end()) {
-                const std::string& name = it->path();
-                // TODO: log if duplicated files were dropped
-                filesResolved.erase(std::remove_if(std::next(it), filesResolved.end(), [&](const FileWithDetails& entry) {
-                    return entry.path() == name;
-                }), filesResolved.end());
-                ++it;
-            }
-        }
-
         std::list<FileWithDetails> files;
         if (!mSettings.fileFilters.empty()) {
             files = filterFiles(mSettings.fileFilters, filesResolved);
@@ -290,6 +275,19 @@ bool CmdLineParser::fillSettingsFromArgs(int argc, const char* const argv[])
         }
         else {
             files = std::move(filesResolved);
+        }
+
+        // de-duplicate files
+        {
+            auto it = files.begin();
+            while (it != files.end()) {
+                const std::string& absname = it->abspath();
+                // TODO: log if duplicated files were dropped
+                files.erase(std::remove_if(std::next(it), files.end(), [&](const FileWithDetails& entry) {
+                    return entry.abspath() == absname;
+                }), files.end());
+                ++it;
+            }
         }
 
         frontend::applyLang(files, mSettings, mEnforcedLang);
@@ -354,7 +352,7 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
         return Result::Fail;
 
     if (argc <= 1) {
-        printHelp(mSettings.premium);
+        printHelp();
         return Result::Exit;
     }
 
@@ -364,9 +362,9 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
         if (std::strcmp(argv[i], "--doc") == 0) {
             std::ostringstream doc;
             // Get documentation..
-            for (const Check * it : Check::instances()) {
-                const std::string& name(it->name());
-                const std::string info(it->classInfo());
+            for (const Check * const c : CheckInstances::get()) {
+                const std::string& name(c->name());
+                const std::string info(c->classInfo());
                 if (!name.empty() && !info.empty())
                     doc << "## " << name << " ##\n"
                         << info << "\n";
@@ -389,7 +387,7 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
 
         // Print help
         if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
-            printHelp(mSettings.premium);
+            printHelp();
             return Result::Exit;
         }
 
@@ -461,6 +459,11 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
         else if (std::strcmp(argv[i], "-E") == 0) {
             mSettings.preprocessOnly = true;
             mSettings.quiet = true;
+        }
+
+        // -CC
+        else if (std::strcmp(argv[i], "-CC") == 0) {
+            mSettings.keepComments = true;
         }
 
         // Include paths
@@ -622,6 +625,9 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
             mSettings.cppHeaderProbe = true;
         }
 
+        else if (std::strcmp(argv[i], "--debug-analyzerinfo") == 0)
+            mSettings.debugainfo = true;
+
         else if (std::strcmp(argv[i], "--debug-ast") == 0)
             mSettings.debugast = true;
 
@@ -632,6 +638,9 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
         // Show debug messages for ignored files
         else if (std::strcmp(argv[i], "--debug-ignore") == 0)
             mSettings.debugignore = true;
+
+        else if (std::strcmp(argv[i], "--debug-ipc") == 0)
+            mSettings.debugipc = true;
 
         // Show --debug output after the first simplifications
         else if (std::strcmp(argv[i], "--debug") == 0 ||
@@ -750,6 +759,15 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
             }
             else {
                 mLogger.printError("unknown executor: '" + type + "'.");
+                return Result::Fail;
+            }
+        }
+
+        else if (std::strncmp(argv[i], "--exitcode-suppress=", 20) == 0) {
+            const std::string suppression = argv[i]+20;
+            const std::string errmsg(mSuppressions.nofail.addSuppressionLine(suppression));
+            if (!errmsg.empty()) {
+                mLogger.printError(errmsg);
                 return Result::Fail;
             }
         }
@@ -1116,7 +1134,8 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
                 "misra-c++-2023",
                 "misra-cpp-2023",
                 "bughunting",
-                "safety",  // TODO: deprecate in favor of the regular --saftey/--no-safety
+                "safety",  // TODO: deprecate in favor of the regular --safety/--no-safety
+                "safety-profiles",
                 "debug-progress"};
             // valid options --premium-..=
             const std::set<std::string> valid2{
@@ -1134,13 +1153,21 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
                 mSettings.premiumArgs += " ";
             const std::string p(argv[i] + 10);
             const std::string p2(p.find('=') != std::string::npos ? p.substr(0, p.find('=')) : "");
-            const bool isCodingStandard = startsWith(p, "autosar") || startsWith(p,"cert-") || startsWith(p,"misra-");
+            const bool isCodingStandard = startsWith(p, "autosar") || startsWith(p,"cert-") || startsWith(p,"misra-") || p == "safety-profiles";
             const std::string p3(endsWith(p,":all") && isCodingStandard ? p.substr(0,p.rfind(':')) : p);
             if (!valid.count(p3) && !valid2.count(p2)) {
                 mLogger.printError("invalid --premium option '" + (p2.empty() ? p : p2) + "'.");
                 return Result::Fail;
             }
-            mSettings.premiumArgs += "--" + p;
+            if (p2 == "cert-c-int-precision") {
+                int tmp;
+                if (!parseNumberArg(argv[i], 31, tmp, true))
+                    return Result::Fail;
+            }
+            if (p.find(' ') != std::string::npos)
+                mSettings.premiumArgs += "\"--" + p + "\"";
+            else
+                mSettings.premiumArgs += "--" + p;
             if (isCodingStandard) {
                 // All checkers related to the coding standard should be enabled. The coding standards
                 // do not all undefined behavior or portability issues.
@@ -1185,7 +1212,9 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
             }
             if (projectType == ImportProject::Type::COMPILE_DB)
                 mSettings.maxConfigsProject = 1;
-            if (projectType == ImportProject::Type::VS_SLN || projectType == ImportProject::Type::VS_VCXPROJ) {
+            if (projectType == ImportProject::Type::VS_SLN ||
+                projectType == ImportProject::Type::VS_SLNX ||
+                projectType == ImportProject::Type::VS_VCXPROJ) {
                 mSettings.libraries.emplace_back("windows");
             }
             for (const auto &error : project.errors)
@@ -1211,7 +1240,9 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
                 mLogger.printError("--project-configuration parameter is empty.");
                 return Result::Fail;
             }
-            if (projectType != ImportProject::Type::VS_SLN && projectType != ImportProject::Type::VS_VCXPROJ) {
+            if (projectType != ImportProject::Type::VS_SLN &&
+                projectType != ImportProject::Type::VS_SLNX &&
+                projectType != ImportProject::Type::VS_VCXPROJ) {
                 mLogger.printError("--project-configuration has no effect - no Visual Studio project provided.");
                 return Result::Fail;
             }
@@ -1282,7 +1313,7 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
         // Rule given at command line
         else if (std::strncmp(argv[i], "--rule=", 7) == 0) {
 #ifdef HAVE_RULES
-            Settings::Rule rule;
+            Rule rule;
             rule.pattern = 7 + argv[i];
 
             if (rule.pattern.empty()) {
@@ -1291,7 +1322,7 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
             }
 
             std::string regex_err;
-            auto regex = Regex::create(rule.pattern, regex_err);
+            auto regex = Regex::create(rule.pattern, Regex::Engine::Pcre, regex_err);
             if (!regex) {
                 mLogger.printError("failed to compile rule pattern '" + rule.pattern + "' (" + regex_err + ").");
                 return Result::Fail;
@@ -1318,7 +1349,8 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
                 if (node && strcmp(node->Value(), "rules") == 0)
                     node = node->FirstChildElement("rule");
                 for (; node && strcmp(node->Value(), "rule") == 0; node = node->NextSiblingElement()) {
-                    Settings::Rule rule;
+                    Rule rule;
+                    Regex::Engine regexEngine = Regex::Engine::Pcre;
 
                     for (const tinyxml2::XMLElement *subnode = node->FirstChildElement(); subnode; subnode = subnode->NextSiblingElement()) {
                         const char * const subname = subnode->Name();
@@ -1348,6 +1380,16 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
                                 }
                             }
                         }
+                        else if (std::strcmp(subname, "engine") == 0) {
+                            const char * const engine = empty_if_null(subtext);
+                            if (std::strcmp(engine, "pcre") == 0) {
+                                regexEngine = Regex::Engine::Pcre;
+                            }
+                            else {
+                                mLogger.printError(std::string("unknown regex engine '") + engine + "'.");
+                                return Result::Fail;
+                            }
+                        }
                         else {
                             mLogger.printError("unable to load rule-file '" + ruleFile + "' - unknown element '" + subname + "' encountered in 'rule'.");
                             return Result::Fail;
@@ -1375,7 +1417,7 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
                     }
 
                     std::string regex_err;
-                    auto regex = Regex::create(rule.pattern, regex_err);
+                    auto regex = Regex::create(rule.pattern, regexEngine, regex_err);
                     if (!regex) {
                         mLogger.printError("unable to load rule-file '" + ruleFile + "' - pattern '" + rule.pattern + "' failed to compile (" + regex_err + ").");
                         return Result::Fail;
@@ -1407,17 +1449,17 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
         else if (std::strncmp(argv[i], "--showtime=", 11) == 0) {
             const std::string showtimeMode = argv[i] + 11;
             if (showtimeMode == "file")
-                mSettings.showtime = ShowTime::FILE;
+                mSettings.showtime = Settings::ShowTime::FILE;
             else if (showtimeMode == "file-total")
-                mSettings.showtime = ShowTime::FILE_TOTAL;
+                mSettings.showtime = Settings::ShowTime::FILE_TOTAL;
             else if (showtimeMode == "summary")
-                mSettings.showtime = ShowTime::SUMMARY;
+                mSettings.showtime = Settings::ShowTime::SUMMARY;
             else if (showtimeMode == "top5_file")
-                mSettings.showtime = ShowTime::TOP5_FILE;
+                mSettings.showtime = Settings::ShowTime::TOP5_FILE;
             else if (showtimeMode == "top5_summary")
-                mSettings.showtime = ShowTime::TOP5_SUMMARY;
+                mSettings.showtime = Settings::ShowTime::TOP5_SUMMARY;
             else if (showtimeMode == "none")
-                mSettings.showtime = ShowTime::NONE;
+                mSettings.showtime = Settings::ShowTime::NONE;
             else if (showtimeMode.empty()) {
                 mLogger.printError("no mode provided for --showtime");
                 return Result::Fail;
@@ -1646,7 +1688,9 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
         mSettings.platform.defaultSign = defaultSign;
 
     if (!mSettings.analyzeAllVsConfigs) {
-        if (projectType != ImportProject::Type::VS_SLN && projectType != ImportProject::Type::VS_VCXPROJ) {
+        if (projectType != ImportProject::Type::VS_SLN &&
+            projectType != ImportProject::Type::VS_SLNX &&
+            projectType != ImportProject::Type::VS_VCXPROJ) {
             if (mAnalyzeAllVsConfigsSetOnCmdLine) {
                 mLogger.printError("--no-analyze-all-vs-configs has no effect - no Visual Studio project provided.");
                 return Result::Fail;
@@ -1698,16 +1742,17 @@ CmdLineParser::Result CmdLineParser::parseFromArgs(int argc, const char* const a
     if (mSettings.basePaths.empty() && mSettings.relativePaths)
         mSettings.basePaths = mPathNames;
 
+    if (mSettings.keepComments && !mSettings.preprocessOnly) {
+        mLogger.printError("-CC may only be used on conjunciton with -E");
+        return Result::Fail;
+    }
+
+
     return Result::Success;
 }
 
-void CmdLineParser::printHelp(bool premium) const
+void CmdLineParser::printHelp() const
 {
-    // TODO: fetch URL from config like product name?
-    const std::string manualUrl(premium ?
-                                "https://files.cppchecksolutions.com/manual.pdf" :
-                                "https://cppcheck.sourceforge.io/manual.pdf");
-
     std::ostringstream oss;
     // TODO: display product name
     oss << "Cppcheck - A tool for static C/C++ code analysis\n"
@@ -1726,6 +1771,7 @@ void CmdLineParser::printHelp(bool premium) const
         "                         addon json files or through this command line option.\n"
         "                         If not present, Cppcheck will try \"python3\" first and\n"
         "                         then \"python\".\n"
+        "    -CC                  Do not remove comments during preprocessing (requires -E).\n"
         "    --cppcheck-build-dir=<dir>\n"
         "                         Cppcheck work folder. Advantages:\n"
         "                          * whole program analysis\n"
@@ -1797,6 +1843,9 @@ void CmdLineParser::printHelp(bool premium) const
         "                         provided. Note that your operating system can modify\n"
         "                         this value, e.g. '256' can become '0'.\n"
         "    --errorlist          Print a list of all the error messages in XML format.\n"
+        "    --exitcode-suppress=<spec>\n"
+        "                         Used to specify an error ID which should not result in\n"
+        "                         a non-zero exitcode."
         "    --exitcode-suppressions=<file>\n"
         "                         Used when certain messages should be displayed but\n"
         "                         should not cause a non-zero exitcode.\n"
@@ -1907,7 +1956,7 @@ void CmdLineParser::printHelp(bool premium) const
         "    --plist-output=<path>\n"
         "                         Generate Clang-plist output files in folder.\n";
 
-    if (premium) {
+    if (mSettings.premium) {
         oss <<
             "    --premium=<option>\n"
             "                         Coding standards:\n"
@@ -1937,13 +1986,13 @@ void CmdLineParser::printHelp(bool premium) const
 
     oss <<
         "    --project=<file>     Run Cppcheck on project. The <file> can be a Visual\n"
-        "                         Studio Solution (*.sln), Visual Studio Project\n"
+        "                         Studio Solution (*.sln) or (*.slnx), Visual Studio Project\n"
         "                         (*.vcxproj), compile database (compile_commands.json),\n"
         "                         or Borland C++ Builder 6 (*.bpr). The files to analyse,\n"
         "                         include paths, defines, platform and undefines in\n"
         "                         the specified file will be used.\n"
         "    --project-configuration=<config>\n"
-        "                         If used together with a Visual Studio Solution (*.sln)\n"
+        "                         If used together with a Visual Studio Solution (*.sln) or (*.slnx)\n"
         "                         or Visual Studio Project (*.vcxproj) you can limit\n"
         "                         the configuration cppcheck should check.\n"
         "                         For example: '--project-configuration=Release|Win32'\n"
@@ -2078,7 +2127,7 @@ void CmdLineParser::printHelp(bool premium) const
         "  cppcheck -I inc1/ -I inc2/ f.cpp\n"
         "\n"
         "For more information:\n"
-        "    " << manualUrl << "\n"
+        "    " << mSettings.manualUrl << "\n"
         "\n"
         "Many thanks to the 3rd party libraries we use:\n"
         " * tinyxml2 -- loading project/library/ctu files.\n"

@@ -11,6 +11,7 @@
 
 #include <Windows.h>
 #include <WinCon.h>
+#include <SetupAPI.h>
 #include <cstdio>
 #include <direct.h>
 #include <evntrace.h>
@@ -22,6 +23,7 @@
 #include <wchar.h>
 #include <atlstr.h>
 #include <string>
+#include <locale.h>
 
 bool UpdateTraceACalled(TRACEHANDLE traceHandle, LPCSTR loggerName, EVENT_TRACE_PROPERTIES* pProperties)
 {
@@ -54,6 +56,13 @@ void invalid_socket()
     // cppcheck-suppress resourceLeak
 }
 
+void invalid_socket_noleak(int a, int t, int p) { // #14155
+    SOCKET s = socket(a, t, p);
+    if (s == INVALID_SOCKET)
+        return;
+    closesocket(s);
+}
+
 void resourceLeak_OpenThread(const DWORD dwDesiredAccess, const BOOL bInheritHandle, const DWORD dwThreadId)
 {
     HANDLE proc = OpenThread(dwDesiredAccess, bInheritHandle, dwThreadId);
@@ -83,6 +92,10 @@ std::string constVariable_GetModuleFileName(void) {
     if (GetModuleFileNameA(NULL, path, sizeof(path))==0)
         return std::string();
     return std::string{path};
+}
+
+const TCHAR* constVariable_MAKEINTRESOURCE() { // #14564
+    return MAKEINTRESOURCE(5 - 1);
 }
 
 int stringCompare_mbscmp(const unsigned char *string1, const unsigned char *string2)
@@ -601,6 +614,27 @@ void memleak_malloca()
     // cppcheck-suppress [unusedAllocatedMemory, unreadVariable, constVariablePointer]
     void *pMem = _malloca(10);
     // cppcheck-suppress memleak
+}
+
+void memleak_create_locale()
+{
+    // cppcheck-suppress-begin valueFlowBailoutIncompleteVar
+    _locale_t locale = _create_locale(LC_ALL, "C");
+    _locale_t wlocale = _wcreate_locale(LC_ALL, L"C");
+    (void) locale;
+    (void) wlocale;
+    // cppcheck-suppress-end valueFlowBailoutIncompleteVar
+    // cppcheck-suppress memleak
+}
+
+void no_memleak_create_locale()
+{
+    // cppcheck-suppress-begin valueFlowBailoutIncompleteVar
+    _locale_t locale = _create_locale(LC_ALL, "C");
+    _locale_t wlocale = _wcreate_locale(LC_ALL, L"C");
+    _free_locale(locale);
+    _free_locale(wlocale);
+    // cppcheck-suppress-end valueFlowBailoutIncompleteVar
 }
 
 void memleak_AllocateAndInitializeSid()
@@ -1215,4 +1249,14 @@ void SEH_unusedLabel() { // #13233
     }
     __finally {
     }
+}
+
+HWND constParameterPointer_CreateWindow(void* param) { // #14560
+    return CreateWindow(L"MessageWnd", NULL, 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, param);
+}
+
+void constParameterPointer_SetupDiGetDeviceInstanceId(HDEVINFO info, SP_DEVINFO_DATA *data) {
+    const DWORD buffer_size = 256;
+    TCHAR buffer[buffer_size];
+    SetupDiGetDeviceInstanceId(info, data, buffer, buffer_size, NULL);
 }

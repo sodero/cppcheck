@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2024 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,11 +26,13 @@
 #include <string>
 #include <utility>
 
-class TestRegEx : public TestFixture {
+class TestRegExBase : public TestFixture {
 public:
-    TestRegEx() : TestFixture("TestRegEx") {}
+    TestRegExBase(const char * const name, Regex::Engine engine) : TestFixture(name), mEngine(engine) {}
 
 private:
+    Regex::Engine mEngine;
+
     void run() override {
         TEST_CASE(match);
         TEST_CASE(nomatch);
@@ -44,9 +46,11 @@ private:
 #define assertRegex(...) assertRegex_(__FILE__, __LINE__, __VA_ARGS__)
     std::shared_ptr<Regex> assertRegex_(const char* file, int line, std::string pattern, const std::string& exp_err = "") const {
         std::string regex_err;
-        auto r = Regex::create(std::move(pattern), regex_err);
-        if (exp_err.empty())
+        auto r = Regex::create(std::move(pattern), mEngine, regex_err);
+        if (exp_err.empty()) {
             ASSERT_LOC(!!r.get(), file, line);
+            ASSERT_EQUALS_ENUM_LOC(mEngine, r->engine(), file, line);
+        }
         else
             ASSERT_LOC(!r.get(), file, line); // only not set if we encountered an error
         ASSERT_EQUALS_LOC(exp_err, regex_err, file, line);
@@ -80,7 +84,11 @@ private:
     }
 
     void compileError() const {
-        (void)assertRegex("[", "pcre_compile failed: missing terminating ] for character class");
+        std::string exp;
+        if (mEngine == Regex::Engine::Pcre)
+            exp = "missing terminating ] for character class";
+
+        (void)assertRegex("[", exp);
     }
 
     void copy() const {
@@ -190,6 +198,11 @@ private:
 #undef assertRegex
 };
 
-REGISTER_TEST(TestRegEx)
+class TestRegExPcre : public TestRegExBase {
+public:
+    TestRegExPcre() : TestRegExBase("TestRegExPcre", Regex::Engine::Pcre) {}
+};
+
+REGISTER_TEST(TestRegExPcre)
 
 #endif // HAVE_RULES

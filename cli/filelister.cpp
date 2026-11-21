@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2025 Cppcheck team.
+ * Copyright (C) 2007-2026 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -172,7 +172,7 @@ std::string FileLister::addFiles(std::list<FileWithDetails> &files, const std::s
 
     std::string err = addFiles2(filesSorted, path, extra, recursive, ignored, debug);
 
-    // files need to be sorted as the filesystems dosn't provide a stable order
+    // files need to be sorted as the filesystems doesn't provide a stable order
     filesSorted.sort([](const FileWithDetails& a, const FileWithDetails& b) {
         return a.path() < b.path();
     });
@@ -293,7 +293,7 @@ std::string FileLister::addFiles(std::list<FileWithDetails> &files, const std::s
 
     std::string err = addFiles2(filesSorted, corrected_path, extra, recursive, ignored, debug);
 
-    // files need to be sorted as the filesystems dosn't provide a stable order
+    // files need to be sorted as the filesystems doesn't provide a stable order
     filesSorted.sort([](const FileWithDetails& a, const FileWithDetails& b) {
         return a.path() < b.path();
     });
